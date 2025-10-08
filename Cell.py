@@ -11,7 +11,8 @@ class CellType(Enum):
     BRICK: Obstacle that costs HP to break
     HEALING_SCROLL: Health restoration item
     CHEST: Container that may contain items or mimics
-    DRAGON: The final boss enemy
+    DRAGON: The final boss
+    ENEMY: Any enemy other than the dragon
     """
     UNKNOWN = 0
     EMPTY = 1
@@ -20,6 +21,7 @@ class CellType(Enum):
     HEALING_SCROLL = 4
     CHEST = 5
     DRAGON = 6
+    ENEMY = 7
 
 
 class Cell:
@@ -38,7 +40,7 @@ class Cell:
         Initialize a Cell with its current state
 
         :param revealed: 1 if the cell is revealed, 0 otherwise
-        :param power: Total surrounding enemy power, 0 if unknown
+        :param power: Power of the enemy if an enemy, 0 if unknown, total surrounding enemy power otherwise
         :param bombs: Total surrounding bombs, 0 if unknown
         :param status: CellType indicating what the cell contains
         """
@@ -60,12 +62,12 @@ class Cell:
         """
         Get the one-hot encoding of the cell tpye for observation
 
-        The encoding is a 7-element array where each position corresponds to a CellType:
-        [UNKNOWN, EMPTY, SAFE, BRICK, HEALING_SCROLL, CHEST, DRAGON]
+        The encoding is an 8-element array where each position corresponds to a CellType:
+        [UNKNOWN, EMPTY, SAFE, BRICK, HEALING_SCROLL, CHEST, DRAGON, ENEMY]
 
-        :return: numpy array of shape (7,) with dtype float32
+        :return: numpy array of shape (8,) with dtype float32
         """
-        one_hot = np.zeros(7, dtype=np.float32)
+        one_hot = np.zeros(8, dtype=np.float32)
         one_hot[self.status.value] = 1
 
         return one_hot

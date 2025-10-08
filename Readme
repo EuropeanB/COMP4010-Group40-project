@@ -1,0 +1,5 @@
+To run the game and control it from the Python environment:
+
+1) Navigate to the dragonsweeper_sources1.1.18 directory
+2) Run: python -m http.server 8000
+3) Run main and a Chrome browser should open with the game on it

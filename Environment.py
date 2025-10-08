@@ -23,7 +23,7 @@ class DragonSweeperEnv(gym.Env):
         """
         self.ROWS = 10
         self.COLS = 12
-        self.BOARD_CHANNELS = 10
+        self.BOARD_CHANNELS = 11
         self.PLAYER_CHANNELS = 4
 
         # Game Constants
@@ -96,7 +96,7 @@ class DragonSweeperEnv(gym.Env):
 
                 # One-Hot Encode Type
                 one_hot = cell.get_one_hot()
-                board_space[3:10, row, col] = one_hot
+                board_space[3:11, row, col] = one_hot
 
         # Translate player to player space
         player_space = np.array([
@@ -170,7 +170,7 @@ class DragonSweeperEnv(gym.Env):
         :return: Tuple of (observation, reward, done, truncated, info)
         """
         # Take action
-        # Ideally, here we send the action off to the middleman to send to the game
+        # Here, ideally we have the game logic in python
 
         # Calculate reward
         reward = self._calculate_reward()
