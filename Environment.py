@@ -23,7 +23,7 @@ class DragonSweeperEnv(gym.Env):
         """
         self.ROWS = 10
         self.COLS = 12
-        self.BOARD_CHANNELS = 11
+        self.BOARD_CHANNELS = 13
         self.PLAYER_CHANNELS = 4
 
         # Game Constants
@@ -43,7 +43,7 @@ class DragonSweeperEnv(gym.Env):
         self.player_xp_slots = self.START_XP_SLOTS
 
         # Board representation: Each index represents a square on the board
-        # Channels: [Revealed, Surrounding Power, Surrounding Bombs, One-hot cell encoding]
+        # Channels: [Revealed, Adjacent Power, Cell Power, Adjacent Bombs, One-hot CellType encoding]
         board_space = gym.spaces.Box(
             low = np.zeros((self.BOARD_CHANNELS, self.ROWS, self.COLS), dtype=np.float32),
             high = np.ones((self.BOARD_CHANNELS, self.ROWS, self.COLS), dtype=np.float32),
@@ -74,7 +74,7 @@ class DragonSweeperEnv(gym.Env):
         Translate the environment state into an observation for the agent.
 
         Observation Structure:
-        - Board: 10 x 10 x 12 tensor with channels [Revealed, Surrounding Power, Surrounding Bombs, 7x one-hot types]
+        - Board: 13 x 10 x 12 tensor with channels [Revealed, Adj. Power, Cell Power, Adj. Bombs, 9x one-hot types]
         - Player: [Current HP, Max HP, Current XP, XP Capacity]
 
         :return: Dictionary containing 'board' and 'player' observations
@@ -91,12 +91,13 @@ class DragonSweeperEnv(gym.Env):
 
                 # If space is revealed, indicate surrounding power and bombs (normalized)
                 if cell.revealed:
-                    board_space[1, row, col] = cell.power # Leaving this un-normalized for now, until we decide
-                    board_space[2, row, col] = cell.bombs / self.NUM_BOMBS
+                    board_space[1, row, col] = cell.adj_power # Leaving this un-normalized for now, until we decide
+                    board_space[2, row, col] = cell.cell_power  # Leaving this un-normalized for now, until we decide
+                    board_space[3, row, col] = cell.adj_bombs / self.NUM_BOMBS
 
                 # One-Hot Encode Type
                 one_hot = cell.get_one_hot()
-                board_space[3:11, row, col] = one_hot
+                board_space[4:12, row, col] = one_hot
 
         # Translate player to player space
         player_space = np.array([

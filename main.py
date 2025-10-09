@@ -25,7 +25,6 @@ def printBoard(board):
                     output += "DRAGON  | "
                 elif cell['status'] == 7:
                     output += "ENEMY   | "
-
             else:
                 output += "UNKNOWN | "
 
