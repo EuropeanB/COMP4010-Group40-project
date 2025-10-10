@@ -43,7 +43,7 @@ if __name__ == "__main__":
         choice = input("Level up (1) or click (2) > ")
         res = None
         if choice == '1':
-            res = game.take_action(120)
+            res = game.take_action(130)
         elif choice == '2':
             row = int(input("Enter row > "))
             col = int(input("Enter col > "))
