@@ -14,7 +14,7 @@ window.addEventListener('message', (event) =>
         const canvas = document.querySelector('canvas');
         const rect = canvas.getBoundingClientRect();
         
-        if (action === 120)
+        if (action === 130)
         {
             // Level up - Click on Jorge
             const screenX = (70 / backBuffer.width) * canvas.width + rect.left;

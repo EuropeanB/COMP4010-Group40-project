@@ -22,7 +22,7 @@ class DragonSweeperEnv(gym.Env):
         :param render_mode: Rendering mode (not implemented but required by Gymnasium)
         """
         self.ROWS = 10
-        self.COLS = 12
+        self.COLS = 13
         self.BOARD_CHANNELS = 13
         self.PLAYER_CHANNELS = 4
 
@@ -65,7 +65,7 @@ class DragonSweeperEnv(gym.Env):
             "player": player_space
         })
 
-        # Action space: 0-119 for selected grid cells, 120 for level-up
+        # Action space: 0-129 for selected grid cells, 130 for level-up
         self.action_space = gym.spaces.Discrete(self.ROWS * self.COLS + 1)
 
 
