@@ -68,6 +68,22 @@ class Game:
                     output += "MEDIKIT  | "
                 elif actor == Actors.GNOME:
                     output += "GNOME    | "
+                elif actor == Actors.MINE:
+                    output += "MINE     | "
+                elif actor == Actors.ORB:
+                    output += "ORB      | "
+                elif actor == Actors.RAT:
+                    output += "RAT      | "
+                elif actor == Actors.BAT:
+                    output += "BAT      | "
+                elif actor == Actors.SKELETON:
+                    output += "SKELETON | "
+                elif actor == Actors.SLIME:
+                    output += "SLIME    | "
+                elif actor == Actors.MIMIC:
+                    output += "MIMIC    | "
+                elif actor == Actors.SPELL_MAKE_ORB:
+                    output += "MK. ORB  | "
                 else:
                     output += "ERROR    | "
             output += '\n'

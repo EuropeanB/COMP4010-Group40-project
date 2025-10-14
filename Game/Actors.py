@@ -22,7 +22,7 @@ class Actors(Enum):
     CHEST = 15
     SKELETON = 16
     TREASURE = 17
-    SNAKE = 18
+    SNAKE = 18 # Pointless
     GIANT = 19
     WIZARD = 20
     GAZER = 21
@@ -34,5 +34,5 @@ class Actors(Enum):
     BAT = 27
     GUARD = 28
     CROWN = 29
-    FIDEL = 30
+    FIDEL = 30 # Pointless
     DRAGON_EGG = 31

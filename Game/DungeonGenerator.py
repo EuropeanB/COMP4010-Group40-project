@@ -21,6 +21,16 @@ class DungeonGenerator:
         )
         self.CORNERS = [(0, 0), (0, 12), (9, 0), (9, 12)]
 
+        self.ORB_REVEAL = (
+            [
+                (-2, 0),
+                (-1, -1), (-1, 0), (-1, 1),
+                (0, -2), (0, -1), (0, 1), (0, 2),
+                (1, -1), (1, 0), (1, 1),
+                (2, 0)
+            ]
+        )
+
         self.rem = None
         self.board = [[Cell() for _ in range(self.cols)] for _ in range(self.rows)]
 
@@ -98,17 +108,23 @@ class DungeonGenerator:
             return False
         if not self._place_medikits_and_gnome():
             return False
-        if not self._place_gazer():
+        if not self._place_gazers():
+            return False
+        if not self._place_mines():
+            return False
+        if not self._place_orb(): # Must be after Medikit, Wall, Dragon, Gazer, Chest, Mimic, Make Orb, Rat King, Mine, and Big Slime
+            return False
+        if not self._place_minor_monsters():
             return False
 
-        self.rem.sort()
+        '''self.rem.sort()
         output = ""
         for i in range(self.rows):
             for val in self.rem:
                 if val[0] == i:
                     output += f"{val} , "
             output += '\n'
-        print(output)
+        print(output)'''
 
         return self.board
 
@@ -437,9 +453,9 @@ class DungeonGenerator:
                 possible_spots = self.get_surrounding_cells((medikit_row, medikit_col), True)
                 if len(possible_spots) > 0:
                     gnome_placed = True
-                gnome_row, gnome_col = possible_spots[0]
-                self.board[gnome_row][gnome_col].actor = Actors.GNOME
-                self.rem.remove((gnome_row, gnome_col))
+                    gnome_row, gnome_col = possible_spots[0]
+                    self.board[gnome_row][gnome_col].actor = Actors.GNOME
+                    self.rem.remove((gnome_row, gnome_col))
 
             # Update board for Medikit
             self.board[medikit_row][medikit_col].actor = Actors.MEDIKIT
@@ -448,7 +464,7 @@ class DungeonGenerator:
         return gnome_placed
 
 
-    def _place_gazer(self):
+    def _place_gazers(self):
         """
         No rules for placing gazers, just randomly. Gazers do blind in a 2.0 Euclidean distance circle, however.
 
@@ -465,3 +481,127 @@ class DungeonGenerator:
             self.rem.remove(gazer_spot)
 
         return True
+
+
+    def _place_mines(self):
+        """
+        No rules for placing mines, simply place them randomly.
+
+        :return: True if successful, False otherwise
+        """
+        NUM_MINES = 9
+
+        for i in range(NUM_MINES):
+            if len(self.rem) == 0:
+                return False
+
+            mine_spot = self.rem[0]
+            self.board[mine_spot[0]][mine_spot[1]].actor = Actors.MINE
+            self.rem.remove(mine_spot)
+
+        return True
+
+
+    def _place_minor_monsters(self):
+        """
+        Place the remaining monsters: 13 Rats, 12 Bats, 10 Skeletons, 8 Slimes, 1 Mimic, 1 Spell Orb
+
+        :return: True if successful, False otherwise
+        """
+        NUM_RATS = (13, Actors.RAT)
+        NUM_BATS = (12, Actors.BAT)
+        NUM_SKELETONS = (10, Actors.SKELETON)
+        NUM_SLIMES = (8, Actors.SLIME)
+        NUM_MIMICS = (1, Actors.MIMIC)
+        NUM_SPELL_ORBS = (1, Actors.SPELL_MAKE_ORB)
+
+        actors = [NUM_RATS, NUM_BATS, NUM_SKELETONS, NUM_SLIMES, NUM_MIMICS, NUM_SPELL_ORBS]
+
+        for (num, actor) in actors:
+            for _ in range(num):
+                if len(self.rem) == 0:
+                    return False
+
+                spot = self.rem[0]
+                self.board[spot[0]][spot[1]].actor = actor
+                self.rem.remove(spot)
+
+        return True
+
+
+    def _place_orb(self):
+        """
+        Place the starting orb. There are some rules surrounding this:
+        - Must have two spaces between the orb and the nearest edge
+        - Cannot reveal Dragon, Gazer, Chest, Make Orb Spell, Rat King,
+            Mines, Dragon Egg, Big Slime, or Mimic
+        - Don't want to reveal more than 2 walls. but should reveal at least 1 wall
+        - Want to reveal exactly 1 medikit
+
+        The algorithm for this is taken directly from the game code.
+
+        :return: True if successful, False otherwise
+        """
+        stats = [0] * len(self.rem)
+
+        for i in range(len(self.rem)):
+            row = self.rem[i][0]
+            col = self.rem[i][1]
+
+            if row < 2 or row > (self.rows - 3) or col < 2 or col > (self.cols - 3):
+                stats[i] = -10000
+                continue
+
+            num_medikits = 0
+            num_walls = 0
+            num_forbiddenObjects = 0
+
+            for (add_row, add_col) in self.ORB_REVEAL:
+                new_row = row + add_row
+                new_col = col + add_col
+
+                if new_row < 0 or new_row >= self.rows or new_col < 0 or new_col >= self.cols:
+                    continue
+
+                if self.board[new_row][new_col].actor == Actors.MEDIKIT:
+                    num_medikits += 1
+                elif self.board[new_row][new_col].actor == Actors.WALL:
+                    num_walls += 1
+                elif self.board[new_row][new_col].actor in [
+                    Actors.DRAGON, Actors.DRAGON_EGG, Actors.GAZER, Actors.CHEST, Actors.MIMIC,
+                    Actors.SPELL_MAKE_ORB, Actors.RAT_KING, Actors.MINE, Actors.BIG_SLIME
+                ]:
+                    num_forbiddenObjects += 1
+
+                stats[i] = num_forbiddenObjects * -2000
+                stats[i] += max(0, num_walls - 2) * -2000
+                stats[i] += 2000 if num_medikits == 1 and num_walls > 0 else 0
+
+        # Get max value and verify if good placement
+        max_value = max(stats)
+        if max_value < 0:
+            print('BAD BOARD, NO SUITABLE PLACEMENT FOR ORB')
+            return False
+
+        # Get argmax and update the board
+        max_index = stats.index(max_value)
+        row, col = self.rem[max_index]
+        self.board[row][col].actor = Actors.ORB
+        self.rem.remove((row, col))
+
+        return True
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
