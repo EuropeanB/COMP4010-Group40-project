@@ -70,7 +70,7 @@ class DungeonGenerator:
                 col = cell[1] + j
 
                 # Skip if outside bounds
-                if 0 > row or row > 9 and 0 > col or col > 12:
+                if 0 > row or row > 9 or 0 > col or col > 12:
                     continue
 
                 # Check if spot taken
@@ -84,13 +84,12 @@ class DungeonGenerator:
 
 
     def generate_dungeon(self):
+        # Reset Cells (Required because of bug issues)
+        self.board = [[Cell() for _ in range(self.cols)] for _ in range(self.rows)]
+
         # Reset Remaining Positions
         self.rem = [(row, col) for row in range(10) for col in range(13)]
         random.shuffle(self.rem)
-
-        # TEMPORARY UNTIL FUNCTION IS FULLY DONE
-        self.board = [[Cell() for _ in range(self.cols)] for _ in range(self.rows)]
-        # DONE TEMPORARY
 
         # Place actors
         self._place_dragon_and_egg() # Cannot Fail
@@ -117,14 +116,10 @@ class DungeonGenerator:
         if not self._place_minor_monsters():
             return False
 
-        '''self.rem.sort()
-        output = ""
-        for i in range(self.rows):
-            for val in self.rem:
-                if val[0] == i:
-                    output += f"{val} , "
-            output += '\n'
-        print(output)'''
+        # Calculate surrounding power for all cells
+        for row in range(self.rows):
+            for col in range(self.cols):
+                self.board[row][col].adj_power = self._calculate_surrounding_power(row, col)
 
         return self.board
 
@@ -134,6 +129,8 @@ class DungeonGenerator:
         Places the Dragon dead center and the Dragon Egg nearby
         """
         self.board[self.DRAGON_POSITION[0]][self.DRAGON_POSITION[1]].actor = Actors.DRAGON
+        self.board[self.DRAGON_POSITION[0]][self.DRAGON_POSITION[1]].power = 13
+        self.board[self.DRAGON_POSITION[0]][self.DRAGON_POSITION[1]].revealed = True
         self.rem.remove((self.DRAGON_POSITION[0], self.DRAGON_POSITION[1]))
         egg_row, egg_col = random.choice(self.LEGAL_EGG_POSITIONS)
         self.board[egg_row][egg_col].actor = Actors.DRAGON_EGG
@@ -150,12 +147,14 @@ class DungeonGenerator:
         wizard_spot = random.choice(self.EDGE_SPOTS)
         wizard_row, wizard_col = wizard_spot
         self.board[wizard_row][wizard_col].actor = Actors.WIZARD
+        self.board[wizard_row][wizard_col].power = 1
         self.rem.remove((wizard_row, wizard_col))
 
         # Surround the wizard with slimes
         big_slime_spots = self.get_surrounding_cells(wizard_spot, True)
         for spot in big_slime_spots:
             self.board[spot[0]][spot[1]].actor = Actors.BIG_SLIME
+            self.board[spot[0]][spot[1]].power = 8
             self.rem.remove(spot)
 
         return wizard_spot
@@ -180,6 +179,7 @@ class DungeonGenerator:
 
         mine_king_row, mine_king_col = random.choice(mine_king_options)
         self.board[mine_king_row][mine_king_col].actor = Actors.MINE_KING
+        self.board[mine_king_row][mine_king_col].power = 10
         self.rem.remove((mine_king_row, mine_king_col))
 
 
@@ -195,7 +195,9 @@ class DungeonGenerator:
 
             if (giant_row, giant_col2) in self.rem:
                 self.board[giant_row][giant_col].actor = Actors.GIANT
+                self.board[giant_row][giant_col].power = 9
                 self.board[giant_row][giant_col2].actor = Actors.GIANT
+                self.board[giant_row][giant_col2].power = 9
                 self.rem.remove((giant_row, giant_col))
                 self.rem.remove((giant_row, giant_col2))
                 return True
@@ -258,7 +260,10 @@ class DungeonGenerator:
             minotaur_row, minotaur_col = self.rem[minotaur_indices[i]]
             chest_row, chest_col = chest_locations[i]
             self.board[minotaur_row][minotaur_col].actor = Actors.MINOTAUR
+            self.board[minotaur_row][minotaur_col].power = 6
             self.board[chest_row][chest_col].actor = Actors.CHEST
+            if i > 2: # 2 Contain Medikit (The rest contain 5 XP, handled in main loop)
+                self.board[chest_row][chest_col].contains_medikit = True
             self.rem.remove((minotaur_row, minotaur_col))
             self.rem.remove((chest_row, chest_col))
 
@@ -330,11 +335,17 @@ class DungeonGenerator:
 
                                 # Update board and remove from remaining
                                 self.board[wall_one_one[0]][wall_one_one[1]].actor = Actors.WALL
+                                self.board[wall_one_one[0]][wall_one_one[1]].power = 3
                                 self.board[wall_one_two[0]][wall_one_two[1]].actor = Actors.WALL
+                                self.board[wall_one_two[0]][wall_one_two[1]].power = 3
                                 self.board[wall_two_one[0]][wall_two_one[1]].actor = Actors.WALL
+                                self.board[wall_two_one[0]][wall_two_one[1]].power = 3
                                 self.board[wall_two_two[0]][wall_two_two[1]].actor = Actors.WALL
+                                self.board[wall_two_two[0]][wall_two_two[1]].power = 3
                                 self.board[wall_three_one[0]][wall_three_one[1]].actor = Actors.WALL
+                                self.board[wall_three_one[0]][wall_three_one[1]].power = 3
                                 self.board[wall_three_two[0]][wall_three_two[1]].actor = Actors.WALL
+                                self.board[wall_three_two[0]][wall_three_two[1]].power = 3
                                 self.rem.remove(wall_one_one)
                                 self.rem.remove(wall_one_two)
                                 self.rem.remove(wall_two_one)
@@ -364,9 +375,13 @@ class DungeonGenerator:
             fourth_guardian = random.choice([(row, col) for (row, col) in self.rem if row < row_limit and col > col_limit])
 
             self.board[first_guardian[0]][first_guardian[1]].actor = Actors.GUARD
+            self.board[first_guardian[0]][first_guardian[1]].power = 7
             self.board[second_guardian[0]][second_guardian[1]].actor = Actors.GUARD
+            self.board[second_guardian[0]][second_guardian[1]].power = 7
             self.board[third_guardian[0]][third_guardian[1]].actor = Actors.GUARD
+            self.board[third_guardian[0]][third_guardian[1]].power = 7
             self.board[fourth_guardian[0]][fourth_guardian[1]].actor = Actors.GUARD
+            self.board[fourth_guardian[0]][fourth_guardian[1]].power = 7
             self.rem.remove(first_guardian)
             self.rem.remove(second_guardian)
             self.rem.remove(third_guardian)
@@ -398,7 +413,9 @@ class DungeonGenerator:
                 if len(possible_second_spots) > 0:
                     second_spot = possible_second_spots[0]
                     self.board[first_spot[0]][first_spot[1]].actor = Actors.GARGOYLE
+                    self.board[first_spot[0]][first_spot[1]].power = 4
                     self.board[second_spot[0]][second_spot[1]].actor = Actors.GARGOYLE
+                    self.board[second_spot[0]][second_spot[1]].power = 4
                     self.rem.remove(first_spot)
                     self.rem.remove(second_spot)
                     num_added += 1
@@ -478,7 +495,18 @@ class DungeonGenerator:
 
             gazer_spot = self.rem[0]
             self.board[gazer_spot[0]][gazer_spot[1]].actor = Actors.GAZER
+            self.board[gazer_spot[0]][gazer_spot[1]].power = 5
             self.rem.remove(gazer_spot)
+
+            # Obscure Surrounding Squares (Similar to Orb Reveal)
+            for (add_row, add_col) in self.ORB_REVEAL:
+                new_row = gazer_spot[0] + add_row
+                new_col = gazer_spot[1] + add_col
+
+                if new_row < 0 or new_row >= self.rows or new_col < 0 or new_col >= self.cols:
+                    continue
+
+                self.board[new_row][new_col].obscured = True
 
         return True
 
@@ -497,6 +525,7 @@ class DungeonGenerator:
 
             mine_spot = self.rem[0]
             self.board[mine_spot[0]][mine_spot[1]].actor = Actors.MINE
+            self.board[mine_spot[0]][mine_spot[1]].power = 100
             self.rem.remove(mine_spot)
 
         return True
@@ -508,22 +537,23 @@ class DungeonGenerator:
 
         :return: True if successful, False otherwise
         """
-        NUM_RATS = (13, Actors.RAT)
-        NUM_BATS = (12, Actors.BAT)
-        NUM_SKELETONS = (10, Actors.SKELETON)
-        NUM_SLIMES = (8, Actors.SLIME)
-        NUM_MIMICS = (1, Actors.MIMIC)
-        NUM_SPELL_ORBS = (1, Actors.SPELL_MAKE_ORB)
+        NUM_RATS = (13, Actors.RAT, 1)
+        NUM_BATS = (12, Actors.BAT, 2)
+        NUM_SKELETONS = (10, Actors.SKELETON, 3)
+        NUM_SLIMES = (8, Actors.SLIME, 5)
+        NUM_MIMICS = (1, Actors.MIMIC, 11)
+        NUM_SPELL_ORBS = (1, Actors.SPELL_MAKE_ORB, 0)
 
         actors = [NUM_RATS, NUM_BATS, NUM_SKELETONS, NUM_SLIMES, NUM_MIMICS, NUM_SPELL_ORBS]
 
-        for (num, actor) in actors:
+        for (num, actor, power) in actors:
             for _ in range(num):
                 if len(self.rem) == 0:
                     return False
 
                 spot = self.rem[0]
                 self.board[spot[0]][spot[1]].actor = actor
+                self.board[spot[0]][spot[1]].power = power
                 self.rem.remove(spot)
 
         return True
@@ -573,7 +603,7 @@ class DungeonGenerator:
                 ]:
                     num_forbiddenObjects += 1
 
-                stats[i] = num_forbiddenObjects * -2000
+                stats[i] = num_forbiddenObjects * -10000 # Adjusted to 10K to really prevent forbidden objects from appearing
                 stats[i] += max(0, num_walls - 2) * -2000
                 stats[i] += 2000 if num_medikits == 1 and num_walls > 0 else 0
 
@@ -587,21 +617,28 @@ class DungeonGenerator:
         max_index = stats.index(max_value)
         row, col = self.rem[max_index]
         self.board[row][col].actor = Actors.ORB
+        self.board[row][col].revealed = True
         self.rem.remove((row, col))
 
         return True
 
 
+    def _calculate_surrounding_power(self, row, col):
+        total = 0
+        for i in [-1, 0, 1]:
+            for j in [-1, 0, 1]:
+                # Skip if center cell
+                if i == j == 0:
+                    continue
 
+                new_row = row + i
+                new_col = col + j
 
+                # Skip if outside bounds
+                if 0 > new_row or new_row > 9 or 0 > new_col or new_col > 12:
+                    continue
 
+                if self.board[new_row][new_col].actor != Actors.WALL: # Walls have power, but do not count towards adjacent power
+                    total += self.board[new_row][new_col].power
 
-
-
-
-
-
-
-
-
-
+        return total
