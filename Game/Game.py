@@ -305,13 +305,18 @@ class Game:
             candidates = []
             for i in range(self.ROWS):
                 for j in range(self.COLS):
-                    cell = self.board[i][j]
-                    if not cell.revealed and cell.actor == Actors.EMPTY:
+                    new_cell = self.board[i][j]
+                    if not new_cell.revealed and new_cell.actor == Actors.EMPTY:
                         candidates.append((i, j))
             random.shuffle(candidates)
 
+            print(f"MEDIKIT: {medikits}")
+            print(f"CANDIDATES: {candidates}")
+
             # If no candidate squares, then gnome is turned to XP
             if len(candidates) == 0:
+                print("NO CANDIDATES, CHANGING TO XP")
+
                 cell.actor = Actors.XP
                 cell.xp = 9
                 return True, False
@@ -328,6 +333,9 @@ class Game:
             # The closest to a medikit becomes the gnome
             min_score = min(scores)
             min_index = scores.index(min_score)
+
+            print(f"WINNER: {candidates[min_index]}")
+
             self.board[candidates[min_index][0]][candidates[min_index][1]].actor = Actors.GNOME
 
         else:
