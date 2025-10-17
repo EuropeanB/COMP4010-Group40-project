@@ -30,10 +30,10 @@ class DragonSweeperEnv(gym.Env):
         self.NUM_BOMBS = 9 # Used for normalizing the bomb value
         self.START_HP_SLOTS = 5
         self.MIN_HP = -1 # Represent all death states as -1 HP
-        self.MAX_HP = 15 # I believe the maximum HP is 15 - needs confirmation
+        self.MAX_HP = 19
         self.START_XP_SLOTS = 5
         self.MIN_XP = 0
-        self.MAX_XP = 25 # I believe the maximum XP is 25 - needs confirmation
+        self.MAX_XP = 50 # Because of overflow, this number isn't trivially known
 
         # Initialize state variables
         self.board = [[Cell() for _ in range(self.COLS)] for _ in range(self.ROWS)]

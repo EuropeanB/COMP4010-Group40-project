@@ -4,7 +4,7 @@ class Actors(Enum):
     """
     This is all the possible actors that can be stored in a cell in the game
     """
-    NONE = 0
+    NONE = 0 # This isn't used at all I believe
     EMPTY = 1
     ORB = 2
     SPELL_MAKE_ORB = 3
@@ -36,3 +36,4 @@ class Actors(Enum):
     CROWN = 29
     FIDEL = 30 # Pointless
     DRAGON_EGG = 31
+    XP = 32 # I added this. We'll represent dead enemies/open chest/etc. as just XP
