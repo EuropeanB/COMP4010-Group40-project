@@ -1,7 +1,7 @@
 import pygame, sys
 from Game import Game
 from Actors import Actors
-from GameCell import Cell
+from Cell import Cell
 
 class GameVisual:
     def __init__(self):
@@ -25,41 +25,42 @@ class GameVisual:
         self.game = game
 
     def load_sprites(self):
+        path = "Sprites"
         self.sprites = {}
-        self.sprites[Actors.BAT] = pygame.image.load("Sprites/bat.png").convert()
-        self.sprites[Actors.DRAGON] = pygame.image.load("Sprites/dragon.png").convert()
-        self.sprites[Actors.RAT] = pygame.image.load("Sprites/rat.png").convert()
-        self.sprites[Actors.GARGOYLE] = pygame.image.load("Sprites/gargoyle.png").convert()
-        self.sprites[Actors.SLIME] = pygame.image.load("Sprites/slime.png").convert()
-        self.sprites[Actors.BIG_SLIME] = pygame.image.load("Sprites/big_slime.png").convert()
-        self.sprites[Actors.MINOTAUR] = pygame.image.load("Sprites/minotaur.png").convert()
-        self.sprites[Actors.MINE_KING] = pygame.image.load("Sprites/mine_king.png").convert()
-        self.sprites[Actors.GIANT] = pygame.image.load("Sprites/giant.png").convert()
-        self.sprites[Actors.GUARD] = pygame.image.load("Sprites/guard.png").convert()
-        self.sprites[Actors.GAZER] = pygame.image.load("Sprites/gazer.png").convert()
-        self.sprites[Actors.ORB] = pygame.image.load("Sprites/orb.png").convert()
-        self.sprites[Actors.SPELL_MAKE_ORB] = pygame.image.load("Sprites/spell_make_orb.png").convert()
-        self.sprites[Actors.MEDIKIT] = pygame.image.load("Sprites/medikit.png").convert()
-        self.sprites[Actors.SKELETON] = pygame.image.load("Sprites/skeleton.png").convert()
-        self.sprites[Actors.EMPTY] = pygame.image.load("Sprites/empty_tile.png").convert()
-        self.sprites[Actors.GNOME] = pygame.image.load("Sprites/gnome.png").convert()
-        self.sprites[Actors.SPELL_DISARM] = pygame.image.load("Sprites/spell_disarm.png").convert()
-        self.sprites[Actors.SPELL_REVEAL_RATS] = pygame.image.load("Sprites/spell_reveal_rats.png").convert()
-        self.sprites[Actors.SPELL_REVEAL_SLIMES] = pygame.image.load("Sprites/spell_reveal_slimes.png").convert()
-        self.sprites[Actors.WIZARD] = pygame.image.load("Sprites/wizard.png").convert()
-        self.sprites[Actors.CHEST] = pygame.image.load("Sprites/chest.png").convert()
-        self.sprites[Actors.CROWN] = pygame.image.load("Sprites/crown.png").convert()
-        self.sprites[Actors.MIMIC] = pygame.image.load("Sprites/chest.png").convert()
-        self.sprites[Actors.DRAGON_EGG] = pygame.image.load("Sprites/dragon_egg.png").convert()
-        self.sprites[Actors.MINE] = pygame.image.load("Sprites/mine.png").convert()
-        self.sprites["wall_1"] = pygame.image.load("Sprites/wall_1.png").convert()
-        self.sprites["wall_2"] = pygame.image.load("Sprites/wall_2.png").convert()
-        self.sprites["wall_3"] = pygame.image.load("Sprites/wall_3.png").convert()
-        self.sprites["hidden_tile"] = pygame.image.load("Sprites/hidden_tile.png").convert()
-        self.sprites["empty_tile"] = pygame.image.load("Sprites/empty_tile.png").convert()
-        self.sprites["jorge"] = pygame.image.load("Sprites/jorge.png").convert()
-        self.sprites["jorge_level_up"] = pygame.image.load("Sprites/jorge_level_up.png").convert()
-        self.sprites["jorge_zero_health"] = pygame.image.load("Sprites/jorge_zero_health.png").convert()
+        self.sprites[Actors.BAT] = pygame.image.load(f"{path}/bat.png").convert()
+        self.sprites[Actors.DRAGON] = pygame.image.load(f"{path}/dragon.png").convert()
+        self.sprites[Actors.RAT] = pygame.image.load(f"{path}/rat.png").convert()
+        self.sprites[Actors.GARGOYLE] = pygame.image.load(f"{path}/gargoyle.png").convert()
+        self.sprites[Actors.SLIME] = pygame.image.load(f"{path}/slime.png").convert()
+        self.sprites[Actors.BIG_SLIME] = pygame.image.load(f"{path}/big_slime.png").convert()
+        self.sprites[Actors.MINOTAUR] = pygame.image.load(f"{path}/minotaur.png").convert()
+        self.sprites[Actors.MINE_KING] = pygame.image.load(f"{path}/mine_king.png").convert()
+        self.sprites[Actors.GIANT] = pygame.image.load(f"{path}/giant.png").convert()
+        self.sprites[Actors.GUARD] = pygame.image.load(f"{path}/guard.png").convert()
+        self.sprites[Actors.GAZER] = pygame.image.load(f"{path}/gazer.png").convert()
+        self.sprites[Actors.ORB] = pygame.image.load(f"{path}/orb.png").convert()
+        self.sprites[Actors.SPELL_MAKE_ORB] = pygame.image.load(f"{path}/spell_make_orb.png").convert()
+        self.sprites[Actors.MEDIKIT] = pygame.image.load(f"{path}/medikit.png").convert()
+        self.sprites[Actors.SKELETON] = pygame.image.load(f"{path}/skeleton.png").convert()
+        self.sprites[Actors.EMPTY] = pygame.image.load(f"{path}/empty_tile.png").convert()
+        self.sprites[Actors.GNOME] = pygame.image.load(f"{path}/gnome.png").convert()
+        self.sprites[Actors.SPELL_DISARM] = pygame.image.load(f"{path}/spell_disarm.png").convert()
+        self.sprites[Actors.SPELL_REVEAL_RATS] = pygame.image.load(f"{path}/spell_reveal_rats.png").convert()
+        self.sprites[Actors.SPELL_REVEAL_SLIMES] = pygame.image.load(f"{path}/spell_reveal_slimes.png").convert()
+        self.sprites[Actors.WIZARD] = pygame.image.load(f"{path}/wizard.png").convert()
+        self.sprites[Actors.CHEST] = pygame.image.load(f"{path}/chest.png").convert()
+        self.sprites[Actors.CROWN] = pygame.image.load(f"{path}/crown.png").convert()
+        self.sprites[Actors.MIMIC] = pygame.image.load(f"{path}/chest.png").convert()
+        self.sprites[Actors.DRAGON_EGG] = pygame.image.load(f"{path}/dragon_egg.png").convert()
+        self.sprites[Actors.MINE] = pygame.image.load(f"{path}/mine.png").convert()
+        self.sprites["wall_1"] = pygame.image.load(f"{path}/wall_1.png").convert()
+        self.sprites["wall_2"] = pygame.image.load(f"{path}/wall_2.png").convert()
+        self.sprites["wall_3"] = pygame.image.load(f"{path}/wall_3.png").convert()
+        self.sprites["hidden_tile"] = pygame.image.load(f"{path}/hidden_tile.png").convert()
+        self.sprites["empty_tile"] = pygame.image.load(f"{path}/empty_tile.png").convert()
+        self.sprites["jorge"] = pygame.image.load(f"{path}/jorge.png").convert()
+        self.sprites["jorge_level_up"] = pygame.image.load(f"{path}/jorge_level_up.png").convert()
+        self.sprites["jorge_zero_health"] = pygame.image.load(f"{path}/jorge_zero_health.png").convert()
 
     def update_display(self):
 
@@ -158,7 +159,7 @@ if __name__ == "__main__":
                 click_pos = event.pos  # (x, y)
                 if click_in_grid(click_pos):
                     col, row = get_clicked_tile_coords(event.pos)
-                    alive, terminated = game.touch_square(row, col)
+                    alive, terminated, success = game.touch_square(row, col)
                     if alive and terminated:
                         print(f"Game Over! Won with a score of {game.score}/365")
                         running = False
