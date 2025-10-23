@@ -1,4 +1,4 @@
-from GameCell import Cell
+from Cell import Cell
 from Actors import Actors
 import math
 import random

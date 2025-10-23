@@ -21,7 +21,7 @@ class Actors(Enum):
     MINOTAUR = 14
     CHEST = 15
     SKELETON = 16
-    TREASURE = 17
+    TREASURE = 17 # Pointless
     SNAKE = 18 # Pointless
     GIANT = 19
     WIZARD = 20

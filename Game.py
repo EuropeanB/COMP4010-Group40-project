@@ -37,20 +37,30 @@ class Game:
             self.board = self.dungeon_generator.generate_dungeon()
 
 
+    def get_required_level_xp(self):
+        """
+        Get the amount of XP required to level up.
+
+        :return: Amount of XP needed to level up
+        """
+        curr_level = self.level - 1 if self.level < len(self.XP_REQUIREMENTS) else len(self.XP_REQUIREMENTS) - 1
+        return self.XP_REQUIREMENTS[curr_level]
+
+
     def level_up(self):
         """
         Levels up the character if they have enough XP. Gain a heart container every 2 levels, to a max of 19.
 
         :return: True if level up, False if unable
         """
-        curr_level = self.level - 1 if self.level < len(self.XP_REQUIREMENTS) else len(self.XP_REQUIREMENTS) - 1
+        xp_required = self.get_required_level_xp()
 
         # Check if player can even level up
-        if self.xp < self.XP_REQUIREMENTS[curr_level]:
+        if self.xp < xp_required:
             return False
 
         # Remove required xp
-        self.xp -= self.XP_REQUIREMENTS[curr_level]
+        self.xp -= xp_required
 
         # Add a heart if even level is even and if below 19 total hearts
         if self.level % 2 == 0 and self.max_health < 19:
@@ -69,7 +79,7 @@ class Game:
 
         :param row: The row of the cell to click
         :param col: The col of the cell to click
-        :return: (Alive, Win) tuple. Win is True if crown is grabbed
+        :return: (Alive, Win, Success) tuple. Win is True if crown is grabbed. Success is true if state was changed
         """
         cell = self.board[row][col]
 
@@ -98,7 +108,7 @@ class Game:
             if not cell.revealed:
                 cell.revealed = True
             else:
-                return True, False # Perhaps do something here to indicate it essentially chose a pointless move?
+                return True, False, False
 
         elif cell.actor == Actors.MINE:
             if cell.power == 0: # Disabled (Clicking a disabled bomb sets it to XP even if hidden)
@@ -156,7 +166,7 @@ class Game:
 
         elif cell.actor == Actors.CROWN:
             cell.actor = Actors.EMPTY
-            return True, True
+            return True, True, True
 
         elif cell.actor == Actors.CHEST:
             if cell.revealed is False:
@@ -310,16 +320,11 @@ class Game:
                         candidates.append((i, j))
             random.shuffle(candidates)
 
-            print(f"MEDIKIT: {medikits}")
-            print(f"CANDIDATES: {candidates}")
-
             # If no candidate squares, then gnome is turned to XP
             if len(candidates) == 0:
-                print("NO CANDIDATES, CHANGING TO XP")
-
                 cell.actor = Actors.XP
                 cell.xp = 9
-                return True, False
+                return True, False, True
 
             # Find closest to a medikit
             scores = []
@@ -342,7 +347,7 @@ class Game:
             print("ERROR! UNKNOWN ACTOR SELECTED")
 
 
-        return self.curr_health >= 0, False
+        return self.curr_health >= 0, False, True
 
 
     def _damage_player(self, monster_power):
