@@ -18,6 +18,9 @@ class Game:
         self.max_health = 5
         self.curr_health = 5
 
+        # This is used for tracking cause of death
+        self.last_touched = None
+
         self.dungeon_generator = DungeonGenerator(self.ROWS, self.COLS)
         self.board = None
 
@@ -57,7 +60,9 @@ class Game:
 
         # Check if player can even level up
         if self.xp < xp_required:
+            self.last_touched = "LEVEL UP (FAILED)"
             return False
+        self.last_touched = "LEVEL UP (SUCCESSFUL)"
 
         # Remove required xp
         self.xp -= xp_required
@@ -82,6 +87,7 @@ class Game:
         :return: (Alive, Win, Success) tuple. Win is True if crown is grabbed. Success is true if state was changed
         """
         cell = self.board[row][col]
+        self.last_touched = cell.actor.name
 
         if cell.actor in [
             Actors.RAT, Actors.BAT, Actors.SKELETON, Actors.GARGOYLE, Actors.SLIME,
@@ -338,8 +344,6 @@ class Game:
             # The closest to a medikit becomes the gnome
             min_score = min(scores)
             min_index = scores.index(min_score)
-
-            print(f"WINNER: {candidates[min_index]}")
 
             self.board[candidates[min_index][0]][candidates[min_index][1]].actor = Actors.GNOME
 
