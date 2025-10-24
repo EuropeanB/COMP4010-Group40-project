@@ -1,8 +1,10 @@
 import numpy as np
 import gymnasium as gym
 import math
+import time
 from Game import Game
 from Actors import Actors
+from GameVisual import GameVisual
 
 
 class DragonSweeperEnv(gym.Env):
@@ -23,12 +25,19 @@ class DragonSweeperEnv(gym.Env):
 
         :param render_mode: Rendering mode (not implemented but required by Gymnasium)
         """
+        # Internal State
+        self.game = Game()
+
+        # Set up the rendering
+        self.render_mode=render_mode
+        self.game_visual = None
+        if self.render_mode == "human":
+            self.game_visual = GameVisual(self.game)
+
+        # Constants
         self.ROWS = 10
         self.COLS = 13
         self.LEVEL_UP_INDEX = self.ROWS * self.COLS # The action value for levelling up
-
-        # Internal State
-        self.game = Game()
 
         # Game Constants
         self.NUM_BOMBS = 9 # Used for normalizing the bomb value
@@ -178,11 +187,23 @@ class DragonSweeperEnv(gym.Env):
 
     def _get_info(self):
         """
-        Returns diagnostic information for debugging/monitoring. Can implement later if needed
+        Returns diagnostic information for debugging/monitoring. Currently, returns
+        the score if the game is won, or the cause of death if lost.
 
+        :param action: The action that was taken
+        :param terminated: If the action led to a terminal state
+        :param alive: If the action led to the player dying
         :return: Auxiliary information associated to the current state
         """
-        return {"info": None}
+        return {
+            "score": self.game.score,
+            "last touched": self.game.last_touched,
+            "hp": self.game.curr_health,
+            "max hp": self.game.max_health,
+            "xp": self.game.xp,
+            "required xp": self.game.get_required_level_xp(),
+            "level": self.game.level
+        }
 
 
     def reset(self, seed=None, options=None):
@@ -217,16 +238,19 @@ class DragonSweeperEnv(gym.Env):
         :param action: Integer action (0-129 for grid cells, 130 for level-up)
         :return: Tuple of (observation, reward, done, truncated, info)
         """
-        # Take action and check termination
+        # Take action
         # Success is true if action did something, false otherwise
         if action == self.LEVEL_UP_INDEX:
             alive = True
-            terminated = False
+            win = False
             success = self.game.level_up()
         else:
             row = math.floor(action / 13)
             col = action % 13
-            alive, terminated, success = self.game.touch_square(row, col)
+            alive, win, success = self.game.touch_square(row, col)
+
+        # Check termination
+        terminated = not alive or win
 
         # Calculate reward
         reward = self._calculate_reward()
@@ -234,8 +258,33 @@ class DragonSweeperEnv(gym.Env):
         # Get observation
         observation = self._get_obs()
 
-        # I'm not 100% sure what these two are used for, but they need to be returned
+        # Get Truncated
         truncated = False
+
+        # Get Info
         info = self._get_info()
 
+        # Update render if required
+        if self.render_mode == "human" and self.game_visual:
+            self.render()
+
         return observation, reward, terminated, truncated, info
+
+
+    def render(self, delay=0.6):
+        """
+        Render the environment.
+        """
+        if self.render_mode != "human" or not self.game_visual:
+            return
+        self.game_visual.update_display()
+        time.sleep(delay)
+
+
+    def close(self):
+        """
+        Close the Pygame window and clean up resources.
+        """
+        if self.game_visual:
+            self.game_visual.close()
+            self.game_visual = None
