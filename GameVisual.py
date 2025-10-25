@@ -100,7 +100,7 @@ class GameVisual:
             self.screen.blit(self.sprites["jorge_dead"], (8,720))
         elif self.game.xp >= self.game.XP_REQUIREMENTS[curr_level]:
             self.screen.blit(self.sprites["jorge_level_up"], (8,720))
-        elif self.game.curr_health == 0:
+        elif self.game.curr_health == 1:
             self.screen.blit(self.sprites["jorge_zero_health"], (8,720))
         else:
             self.screen.blit(self.sprites["jorge"], (8,720))
