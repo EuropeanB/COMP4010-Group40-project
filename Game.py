@@ -15,8 +15,8 @@ class Game:
         self.score = 0
         self.level = 1
         self.xp = 0
-        self.max_health = 5
-        self.curr_health = 5
+        self.max_health = 6
+        self.curr_health = 6
 
         # This is used for tracking cause of death
         self.last_touched = None
@@ -32,8 +32,8 @@ class Game:
         self.score = 0
         self.level = 1
         self.xp = 0
-        self.max_health = 5
-        self.curr_health = 5
+        self.max_health = 6
+        self.curr_health = 6
 
         self.board = False
         while not self.board:
@@ -67,8 +67,8 @@ class Game:
         # Remove required xp
         self.xp -= xp_required
 
-        # Add a heart if even level is even and if below 19 total hearts
-        if self.level % 2 == 0 and self.max_health < 19:
+        # Add a heart if even level is even and if below 20 total hearts
+        if self.level % 2 == 0 and self.max_health < 20:
             self.max_health += 1
 
         # Level up and heal
@@ -351,7 +351,7 @@ class Game:
             print("ERROR! UNKNOWN ACTOR SELECTED")
 
 
-        return self.curr_health >= 0, False, True
+        return self.curr_health > 0, False, True
 
 
     def _damage_player(self, monster_power):
@@ -360,7 +360,7 @@ class Game:
 
         :param monster_power: The amount of damage to deal to the player
         """
-        self.curr_health = max(-1, self.curr_health - monster_power)
+        self.curr_health = max(0, self.curr_health - monster_power)
 
 
     def _disarm_mines(self):
