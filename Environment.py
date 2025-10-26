@@ -4,7 +4,6 @@ import math
 from Game import Game
 from Actors import Actors
 
-
 class DragonSweeperEnv(gym.Env):
     """
     A Gymnasium environment for DragonSweeper, a Minesweeper variant with RPG elements
@@ -97,7 +96,6 @@ class DragonSweeperEnv(gym.Env):
 
         # Action space: 0-129 for selected grid cells, 130 for level-up
         self.action_space = gym.spaces.Discrete(self.ROWS * self.COLS + 1)
-
 
     def _get_obs(self):
         """
@@ -201,14 +199,83 @@ class DragonSweeperEnv(gym.Env):
         return self._get_obs(), self._get_info()
 
 
-    def _calculate_reward(self):
-        """
+    def _calculate_reward(self, old_obs, action: int, new_obs):
+        '''
         Computes reward based on game state and action
 
         :return: The reward calculated
-        """
-        return 0
+        '''
 
+        # All final reward function returns
+        DEATH_PENALTY = -5. # Player dies
+        NON_SENSE = -1. # Player clicks an already revealed square with nothing on it
+        
+        # These are the value we assign to any given game object
+        XPval = 3. # The value of an exp point
+        REVval = 2. # The value of revealing an unrevealed board position
+
+        # "o" as in old
+        o_board = np.transpose(old_obs['board'], (1, 2, 0))
+        o_player = old_obs['player']
+
+        # "n" as in new
+        n_board = np.transpose(new_obs['board'], (1, 2, 0))
+        n_player = new_obs['player']
+
+        # The player has died
+        if n_player[self.CURRENT_HP_IDX] < 0:
+            return DEATH_PENALTY
+    
+        print(f'Past death, player hp: {n_player[self.CURRENT_HP_IDX]}')
+
+        # The player beats the game (gets the crown)
+        if not np.any(n_board[:, :, self.CROWN_IDX]):
+            return float(self.game.score)
+        
+        print(f'Past winning, does crown NOT exist: {not np.any(n_board[:, :, self.CROWN_IDX])}')
+
+        # d short for delta, changes in game state
+        dhp = n_player[self.CURRENT_HP_IDX] - o_player[self.CURRENT_HP_IDX] # dHealth
+        dxp = n_player[self.CURRENT_XP_IDX] - o_player[self.CURRENT_XP_IDX] # dExperience
+        drev = np.sum(n_board[:, :, self.REVEALED_IDX] - np.sum( # dRevealed spaces
+            o_board[:, :, self.REVEALED_IDX]
+        ))
+
+        print(f'we\'re running, deltas (hp, xp, revealed) {dhp, dxp, drev}')
+
+        # If there was no change in hp, xp or revealed spaces, the player changed nothing
+        # We call these moves non-sense and punish them
+        if dhp == 0 and dxp == 0 and drev == 0:
+            return NON_SENSE
+
+        print(f'we\'re running, there is a change {not (dhp == 0 and dxp == 0 and drev == 0)}')
+
+        # If we're not in any of the other special cases
+        # Then reward is just increase in exp times the value of each exp point
+        # Plus the increase in revealed board positions times the value of revealing 
+
+        print(f'we\'re running, return will be {(XPval * dxp) + (REVval * drev)}')
+        return (XPval * dxp) + (REVval * drev)
+
+        # Board: [ [ [ One Hot Encoding??? ] ] ...]
+        # Player Type: [Current HP, Max HP, Current Exp, Experience to level] 
+
+        #self.REVEALED_IDX = 0
+        #self.ADJ_POWER_IDX = 1
+        #self.CELL_POWER_IDX = 2
+        #self.ADJ_BOMBS_IDX = 3
+
+        # o_board
+            # (10, 13, 14)
+            # The final axis is composed of two sub arrays which are concated together:
+                # The first is 4 elements long: [ 
+                #   Whether or not revealed, (REVEALED_IDX)
+                #   Total adjacent pow, (ADJ_POWER_IDX)
+                #   Power of cell, (CELL_POWER_IDX)
+                #   Number of adjacent bombs (ADJ_BOMBS_IDX)
+                # ]
+                # The second is 10 elements long: This is a one hot encoding of enemies
+            # The one hots categorize the enemies based on info you need about them
 
     def step(self, action):
         """
@@ -217,6 +284,8 @@ class DragonSweeperEnv(gym.Env):
         :param action: Integer action (0-129 for grid cells, 130 for level-up)
         :return: Tuple of (observation, reward, done, truncated, info)
         """
+        old_obs = self._get_obs()
+
         # Take action and check termination
         # Success is true if action did something, false otherwise
         if action == self.LEVEL_UP_INDEX:
@@ -228,8 +297,11 @@ class DragonSweeperEnv(gym.Env):
             col = action % 13
             alive, terminated, success = self.game.touch_square(row, col)
 
+        new_obs = self._get_obs()
+
         # Calculate reward
-        reward = self._calculate_reward()
+        print("We're stepping into reward here")
+        reward = self._calculate_reward(old_obs, action, new_obs)
 
         # Get observation
         observation = self._get_obs()
