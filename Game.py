@@ -15,8 +15,11 @@ class Game:
         self.score = 0
         self.level = 1
         self.xp = 0
-        self.max_health = 5
-        self.curr_health = 5
+        self.max_health = 6
+        self.curr_health = 6
+
+        # This is used for tracking cause of death
+        self.last_touched = None
 
         self.dungeon_generator = DungeonGenerator(self.ROWS, self.COLS)
         self.board = None
@@ -29,8 +32,8 @@ class Game:
         self.score = 0
         self.level = 1
         self.xp = 0
-        self.max_health = 5
-        self.curr_health = 5
+        self.max_health = 6
+        self.curr_health = 6
 
         self.board = False
         while not self.board:
@@ -57,13 +60,15 @@ class Game:
 
         # Check if player can even level up
         if self.xp < xp_required:
+            self.last_touched = "LEVEL UP (FAILED)"
             return False
+        self.last_touched = "LEVEL UP (SUCCESSFUL)"
 
         # Remove required xp
         self.xp -= xp_required
 
-        # Add a heart if even level is even and if below 19 total hearts
-        if self.level % 2 == 0 and self.max_health < 19:
+        # Add a heart if even level is even and if below 20 total hearts
+        if self.level % 2 == 0 and self.max_health < 20:
             self.max_health += 1
 
         # Level up and heal
@@ -82,6 +87,7 @@ class Game:
         :return: (Alive, Win, Success) tuple. Win is True if crown is grabbed. Success is true if state was changed
         """
         cell = self.board[row][col]
+        self.last_touched = cell.actor.name
 
         if cell.actor in [
             Actors.RAT, Actors.BAT, Actors.SKELETON, Actors.GARGOYLE, Actors.SLIME,
@@ -339,15 +345,13 @@ class Game:
             min_score = min(scores)
             min_index = scores.index(min_score)
 
-            print(f"WINNER: {candidates[min_index]}")
-
             self.board[candidates[min_index][0]][candidates[min_index][1]].actor = Actors.GNOME
 
         else:
             print("ERROR! UNKNOWN ACTOR SELECTED")
 
 
-        return self.curr_health >= 0, False, True
+        return self.curr_health > 0, False, True
 
 
     def _damage_player(self, monster_power):
@@ -356,7 +360,7 @@ class Game:
 
         :param monster_power: The amount of damage to deal to the player
         """
-        self.curr_health = max(-1, self.curr_health - monster_power)
+        self.curr_health = max(0, self.curr_health - monster_power)
 
 
     def _disarm_mines(self):

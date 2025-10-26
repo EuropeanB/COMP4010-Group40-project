@@ -610,7 +610,6 @@ class DungeonGenerator:
         # Get max value and verify if good placement
         max_value = max(stats)
         if max_value < 0:
-            print('BAD BOARD, NO SUITABLE PLACEMENT FOR ORB')
             return False
 
         # Get argmax and update the board

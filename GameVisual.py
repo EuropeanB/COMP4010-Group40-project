@@ -4,27 +4,41 @@ from Actors import Actors
 from Cell import Cell
 
 class GameVisual:
-    def __init__(self):
+    """
+    Handles visualization for the DragonSweeper game using Pygame.
+
+    This class is responsible for:
+    - Initializing the Pygame window
+    - Loading sprites for all game actors
+    - Rendering the board and player stats
+    - Managing the game clock for frame rate control
+    """
+    def __init__(self, game):
+        """
+        Initialize the visualization environment.
+
+        :param game: Instance of the Game class containing the board and game state
+        """
         pygame.init()
-
-        # Set window size
-        WINDOW_WIDTH = (64*13) + (8 * 12)
-        WINDOW_HEIGHT = (64*10) + (8 * 9) + 88
-
-        self.clock = pygame.time.Clock()
-
-        # Create the window
-        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("DragonSweeper")
-
-        self.load_sprites()
-
-        self.font = pygame.font.Font(None, 32)
-
-    def set_game(self, game):
         self.game = game
 
+        # Set window size
+        self.WINDOW_WIDTH = (64 * self.game.COLS) + (8 * 12)
+        self.WINDOW_HEIGHT = (64 * self.game.ROWS) + (8 * 9) + 88
+
+        # Create the window
+        self.screen = pygame.display.set_mode((self.WINDOW_WIDTH, self.WINDOW_HEIGHT))
+        pygame.display.set_caption("DragonSweeper")
+        self.clock = pygame.time.Clock()
+        self.load_sprites()
+        self.font = pygame.font.Font(None, 32)
+
+
     def load_sprites(self):
+        """
+        Loads all required sprite images into memory.
+        Sprites are stored in a dictionary, keyed by actor type or name.
+        """
         path = "Sprites"
         self.sprites = {}
         self.sprites[Actors.BAT] = pygame.image.load(f"{path}/bat.png").convert()
@@ -61,35 +75,53 @@ class GameVisual:
         self.sprites["jorge"] = pygame.image.load(f"{path}/jorge.png").convert()
         self.sprites["jorge_level_up"] = pygame.image.load(f"{path}/jorge_level_up.png").convert()
         self.sprites["jorge_zero_health"] = pygame.image.load(f"{path}/jorge_zero_health.png").convert()
+        self.sprites["jorge_dead"] = pygame.image.load(f"{path}/jorge_dead.png").convert()
+
 
     def update_display(self):
+        """
+        Renders the entire game board, player sprite, and status text.
+
+        Draws each cell, then overlays the player sprite and info text.
+        Uses clock.tick(60) to limit frame rate to 60 FPS.
+        """
+        if not self.game:
+            return
 
         self.screen.fill((30, 30, 60))
-
         for i in range(self.game.ROWS):
             for j in range(self.game.COLS):
                 cell = self.game.board[i][j]
                 self.draw_cell(cell, j, i)
 
+        # Player sprite
         curr_level = self.game.level - 1 if self.game.level < len(self.game.XP_REQUIREMENTS) else len(self.game.XP_REQUIREMENTS) - 1
-
-        if self.game.xp >= self.game.XP_REQUIREMENTS[curr_level]:
+        if self.game.curr_health <= 0:
+            self.screen.blit(self.sprites["jorge_dead"], (8,720))
+        elif self.game.xp >= self.game.XP_REQUIREMENTS[curr_level]:
             self.screen.blit(self.sprites["jorge_level_up"], (8,720))
-        elif self.game.curr_health == 0:
+        elif self.game.curr_health == 1:
             self.screen.blit(self.sprites["jorge_zero_health"], (8,720))
         else:
             self.screen.blit(self.sprites["jorge"], (8,720))
 
+        # Player info text
         player_info_string = f"{self.game.curr_health}/{self.game.max_health} HP  |  {self.game.xp}/{self.game.XP_REQUIREMENTS[curr_level]} XP  |  (Score: {self.game.score})"
         text_surface = self.font.render(player_info_string, True, (255, 255, 255))
         self.screen.blit(text_surface, text_surface.get_rect(center=(464,760)))
 
         pygame.display.flip()
+        self.clock.tick(60)
 
-        gv.clock.tick(60)
 
     def draw_cell(self, cell : Cell, x, y):
+        """
+        Draws a single cell at the specified grid coordinates.
 
+        :param cell: Cell object containing actor type, revealed state, and other properties
+        :param x: Column index on the board
+        :param y: Row index on the board
+        """
         screen_coords = ((x*64) + (x*8), (y*64) + (y*8))
         text_surface_center = ((x*64) + (x*8)+32, (y*64) + (y*8)+32)
 
@@ -121,63 +153,10 @@ class GameVisual:
         else:
             self.screen.blit(self.sprites[cell.actor], screen_coords)
 
-    def end_visualization(self):
+
+    @staticmethod
+    def close():
+        """
+        Close the environment and clean up resources.
+        """
         pygame.quit()
-        sys.exit()
-
-
-def get_clicked_tile_coords(click_pos):
-    grid_coord = (click_pos[0] // 72, click_pos[1] // 72)
-    return grid_coord[0], grid_coord[1]
-
-def click_in_grid(pos):
-    if pos[0] < 0 or pos[0] > 928:
-        return False
-    if pos[1] < 0 or pos[1] > 712:
-        return False
-    return True
-
-def click_on_jorge(pos):
-    if pos[0] > 8 and pos[0] < 80:
-        if pos[1] > 720 and pos[1] < 800:
-            return True
-    return False
-
-if __name__ == "__main__":
-    gv = GameVisual()
-    game = Game()
-    game.reset_game()
-    gv.set_game(game)
-
-    running = True
-    while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                click_pos = event.pos  # (x, y)
-                if click_in_grid(click_pos):
-                    col, row = get_clicked_tile_coords(event.pos)
-                    alive, terminated, success = game.touch_square(row, col)
-                    if alive and terminated:
-                        print(f"Game Over! Won with a score of {game.score}/365")
-                        running = False
-                    elif not alive:
-                        print("Game Over! You Died!")
-                        running = False
-                if click_on_jorge(click_pos):
-                    success = game.level_up()
-                    if success:
-                        print("You successfully levelled up! Press enter to continue")
-                    else:
-                        print("You do not have enough XP to level up. Press enter to continue")
-
-        gv.update_display()
-    
-    gv.end_visualization
-        
-    
-
-
-
