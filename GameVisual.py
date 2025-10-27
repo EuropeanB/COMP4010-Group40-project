@@ -127,8 +127,6 @@ class GameVisual:
 
         if not cell.revealed:
             self.screen.blit(self.sprites["hidden_tile"], screen_coords)
-        elif cell.actor == Actors.MIMIC:
-            pass
         elif cell.actor == Actors.XP:
             text_surface = self.font.render(str(cell.xp), True, (255, 255, 0))
             self.screen.blit(self.sprites["empty_tile"], screen_coords)
