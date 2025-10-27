@@ -229,85 +229,62 @@ class DragonSweeperEnv(gym.Env):
         self.game.reset_game()
 
         return self._get_obs(), self._get_info()
+    
+    # Convert an action to a board position *assuming it can be converted* 
+    # This function deliberately doesn't have a check for levelling up
+    # Since such a guard would force everyone to include a potentially superfluous if
+    def _action_pos(self, action: int):
+        ROW = action // self.COLS
+        COL = action % self.COLS
+        return (ROW, COL)
 
-
-    def _calculate_reward(self, old_obs, action: int, new_obs):
+    def _calculate_reward(self, old_obs, action: int, new_obs, win: bool, alive: bool):
         '''
         Computes reward based on game state and action
 
         :return: The reward calculated
         '''
+        # If the player has won, the reward is just their score
+        if win:
+            return float(self.game.score)
 
-        # All final reward function returns
-        DEATH_PENALTY = -5. # Player dies
-        NON_SENSE = -1. # Player clicks an already revealed square with nothing on it
-        
-        # These are the value we assign to any given game object
-        XPval = 3. # The value of an exp point
-        REVval = 2. # The value of revealing an unrevealed board position
+        # If the player is dead, then they receive a negative penalty
+        if not alive:
+            return -5.
+
+        # Reward for any case where the player tries an action that does nothing
+        NONSENSE = -1
 
         # "o" as in old
-        o_board = np.transpose(old_obs['board'], (1, 2, 0))
+        o_board = old_obs['board']
         o_player = old_obs['player']
 
         # "n" as in new
-        n_board = np.transpose(new_obs['board'], (1, 2, 0))
+        n_board = new_obs['board']
         n_player = new_obs['player']
 
-        # The player has died
-        if n_player[self.CURRENT_HP_IDX] < 0:
-            return DEATH_PENALTY
+        # If the player tried to level up
+        if action == self.LEVEL_UP_INDEX:
+            # If they can't level up
+            if o_player[self.CURRENT_XP_IDX] < o_player[self.XP_REQUIRED_IDX]:
+                return NONSENSE# Punish them for trying a move that does nothing
+            # Otherwise, reward them for succesfully levelling up
+            return 5.
+
+        ROW, COL = self._action_pos(action)
+        # If the player clicked a square where they already can see something about the square
+        # And it's also empty...
+        if o_board[ROW, COL, self.REVEALED_IDX] and o_board[ROW, COL, self.EMPTY_IDX]:
+            return NONSENSE # Punish them for trying a move that does nothing
     
-        print(f'Past death, player hp: {n_player[self.CURRENT_HP_IDX]}')
-
-        # The player beats the game (gets the crown)
-        if not np.any(n_board[:, :, self.CROWN_IDX]):
-            return float(self.game.score)
-        
-        print(f'Past winning, does crown NOT exist: {not np.any(n_board[:, :, self.CROWN_IDX])}')
-
         # d short for delta, changes in game state
-        dhp = n_player[self.CURRENT_HP_IDX] - o_player[self.CURRENT_HP_IDX] # dHealth
         dxp = n_player[self.CURRENT_XP_IDX] - o_player[self.CURRENT_XP_IDX] # dExperience
-        drev = np.sum(n_board[:, :, self.REVEALED_IDX] - np.sum( # dRevealed spaces
-            o_board[:, :, self.REVEALED_IDX]
-        ))
-
-        print(f'we\'re running, deltas (hp, xp, revealed) {dhp, dxp, drev}')
-
-        # If there was no change in hp, xp or revealed spaces, the player changed nothing
-        # We call these moves non-sense and punish them
-        if dhp == 0 and dxp == 0 and drev == 0:
-            return NON_SENSE
-
-        print(f'we\'re running, there is a change {not (dhp == 0 and dxp == 0 and drev == 0)}')
+        drev = np.sum(n_board[:, :, self.REVEALED_IDX]) - np.sum(o_board[:, :, self.REVEALED_IDX]) # Number of newly revealed
 
         # If we're not in any of the other special cases
         # Then reward is just increase in exp times the value of each exp point
-        # Plus the increase in revealed board positions times the value of revealing 
-
-        print(f'we\'re running, return will be {(XPval * dxp) + (REVval * drev)}')
-        return (XPval * dxp) + (REVval * drev)
-
-        # Board: [ [ [ One Hot Encoding??? ] ] ...]
-        # Player Type: [Current HP, Max HP, Current Exp, Experience to level] 
-
-        #self.REVEALED_IDX = 0
-        #self.ADJ_POWER_IDX = 1
-        #self.CELL_POWER_IDX = 2
-        #self.ADJ_BOMBS_IDX = 3
-
-        # o_board
-            # (10, 13, 14)
-            # The final axis is composed of two sub arrays which are concated together:
-                # The first is 4 elements long: [ 
-                #   Whether or not revealed, (REVEALED_IDX)
-                #   Total adjacent pow, (ADJ_POWER_IDX)
-                #   Power of cell, (CELL_POWER_IDX)
-                #   Number of adjacent bombs (ADJ_BOMBS_IDX)
-                # ]
-                # The second is 10 elements long: This is a one hot encoding of enemies
-            # The one hots categorize the enemies based on info you need about them
+        # Plus the increase in revealed board positions times the value of revealing
+        return (3 * dxp) + (2 * drev)
 
     def step(self, action):
         """
@@ -325,23 +302,16 @@ class DragonSweeperEnv(gym.Env):
             win = False
             success = self.game.level_up()
         else:
-            row = action // self.COLS
-            col = action % self.COLS
+            row, col = self._action_pos(action)
             alive, win, success = self.game.touch_square(row, col)
 
         # Check termination
         terminated = not alive or win
 
-        new_obs = self._get_obs()
-
-        new_obs = self._get_obs()
+        observation = new_obs = self._get_obs()
 
         # Calculate reward
-        print("We're stepping into reward here")
-        reward = self._calculate_reward(old_obs, action, new_obs)
-
-        # Get observation
-        observation = self._get_obs()
+        reward = self._calculate_reward(old_obs, action, new_obs, win, alive)
 
         # Get Truncated
         truncated = False
