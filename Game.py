@@ -3,7 +3,6 @@ from DungeonGenerator import DungeonGenerator
 import random
 import math
 
-
 class Game:
     def __init__(self):
         self.ROWS = 10
@@ -56,13 +55,13 @@ class Game:
 
         :return: True if level up, False if unable
         """
+        self.last_touched = None
         xp_required = self.get_required_level_xp()
 
         # Check if player can even level up
         if self.xp < xp_required:
-            self.last_touched = "LEVEL UP (FAILED)"
             return False
-        self.last_touched = "LEVEL UP (SUCCESSFUL)"
+
 
         # Remove required xp
         self.xp -= xp_required
@@ -87,7 +86,7 @@ class Game:
         :return: (Alive, Win, Success) tuple. Win is True if crown is grabbed. Success is true if state was changed
         """
         cell = self.board[row][col]
-        self.last_touched = cell.actor.name
+        self.last_touched = cell.actor
 
         if cell.actor in [
             Actors.RAT, Actors.BAT, Actors.SKELETON, Actors.GARGOYLE, Actors.SLIME,
