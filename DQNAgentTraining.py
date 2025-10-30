@@ -33,7 +33,7 @@ def build_summary(episode, score, cod, rewards, steps, win, explore_rate):
     output += "Win! " if win else "Loss! "
     output += "Score: " + str(score) + " " * (3 - len(str(score))) + " | "
     output += "Cause of death: " + ("None" if win else cod) + " " * (20 - (4 if win else len(str(cod)))) + " | "
-    output += "Total Reward: " + str(round(rewards, 2)) + " " * (5 - len(str(round(rewards, 2)))) + " | "
+    output += "Total Reward: " + str(round(rewards, 2)) + " " * (8 - len(str(round(rewards, 2)))) + " | "
     output += "Total Steps: " + str(steps) + " " * (5 - len(str(steps))) + " | "
     output += "Explore Rate: " + str(explore_rate)
     return output
@@ -42,40 +42,31 @@ def build_summary(episode, score, cod, rewards, steps, win, explore_rate):
 def test_model(episodes, model_path):
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
     env = gym.make("Dragonsweeper-v0", render_mode='human')
+    unw_env = env.unwrapped
+
     board_dim = env.observation_space['board'].shape
     player_dim = env.observation_space['player'].shape[0]
     action_size = env.action_space.n
     agent = DQNAgent(board_dim, player_dim, action_size)
     load_model(agent, model_path)
 
-
-    last_action = None
-    count = 0
-
     for _ in range(episodes):
         state, _ = env.reset()
+        agent.reset_episode()
         terminated = False
+        truncated = False
 
-        while not terminated:
-            action = agent.act(state, training=False)
+        while not (terminated or truncated):
+            legal_mask = unw_env.get_legal_moves_mask(state)
+            action = agent.act(state, legal_mask, training=False)
 
-            if last_action == action:
-                count += 1
-            else:
-                count = 0
-                last_action = action
+            # Apply action
+            next_state, _, terminated, truncated, info = env.step(action)
 
-            if count == 5:
-                print("Choose random action, locked in")
-                action = random.randrange(0, 131)
-                last_action = action
-
-
-            next_state, _, terminated, _, info = env.step(action)
+            # Print information
             print(info)
 
-
-
+            # Update state
             state = next_state
 
 
@@ -83,14 +74,20 @@ def train_model(episodes):
     # Environment Setup
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
     env = gym.make("Dragonsweeper-v0", render_mode=None)
+    unw_env = env.unwrapped
+
     board_dim = env.observation_space['board'].shape
     player_dim = env.observation_space['player'].shape[0]
     action_size = env.action_space.n
-    agent = DQNAgent(board_dim, player_dim, action_size)
+
+    # Create agent with frame stacking
+    agent = DQNAgent(board_dim, player_dim, action_size, frame_stack=4)
 
     for episode in range(episodes):
         state, info = env.reset()
+        agent.reset_episode()
         terminated = False
+        truncated = False
 
         # Episode tracking stats
         total_reward = 0
@@ -98,9 +95,10 @@ def train_model(episodes):
         explore_rate = 0
 
         # Start game
-        while not terminated:
+        while not (terminated or truncated):
             # Action selection and execution
-            action = agent.act(state)
+            legal_mask = unw_env.get_legal_moves_mask(state)
+            action = agent.act(state, legal_mask)
             next_state, reward, terminated, truncated, info = env.step(action)
 
             # Store the experience
@@ -119,6 +117,9 @@ def train_model(episodes):
         # Track training stats
         won = info['hp'] > 0
         print(build_summary(episode, info['score'], info['last touched'], total_reward, total_steps, won, explore_rate))
+
+        if (episode + 1) % 500 == 0:
+            save_model(agent, f'{episode}_checkpoint')
 
     # Save model at the end
     save_model(agent, 'best_model')

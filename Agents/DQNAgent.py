@@ -7,14 +7,16 @@ import random
 
 
 class DQN(nn.Module):
-    def __init__(self, board_shape, player_dim, num_actions):
+    def __init__(self, board_shape, player_dim, num_actions, frame_stack=4):
         super(DQN, self).__init__()
 
         rows, cols, channels = board_shape
+        self.frame_stack = frame_stack
+        self.input_channels = channels * frame_stack
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
+            nn.Conv2d(self.input_channels, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -23,7 +25,7 @@ class DQN(nn.Module):
         )
 
         # Calculate CNN output size
-        self.conv_out_size = 64 * board_shape[0] * board_shape[1]
+        self.conv_out_size = 64 * rows * cols
 
         # Fully connected layers for board output + player processing
         self.fc = nn.Sequential(
@@ -52,13 +54,17 @@ class DQN(nn.Module):
 
 
 class DQNAgent:
-    def __init__(self, board_dim, player_dim, action_dim):
+    def __init__(self, board_dim, player_dim, action_dim, frame_stack=4):
         # Initialization
         self.board_dim = board_dim
         self.player_dim = player_dim
         self.action_dim = action_dim
+        self.frame_stack = frame_stack
         self.total_steps = 0
         self.latest_experience = None
+
+        # Initialize frame stack buffer
+        self.frame_buffer = deque(maxlen=frame_stack)
 
         # Initialize agent memory
         self.memory = deque(maxlen=10000)
@@ -70,7 +76,7 @@ class DQNAgent:
 
         self.explore_rate = 1.0 # Start at 100%
         self.min_explore_rate = 0.2 # Keep at 10% exploration
-        self.explore_decay_steps = 10000 # Reach minimum exploration in 10k steps
+        self.explore_decay_steps = 20000 # Reach minimum exploration in 20k steps
         self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
 
         self.learning_starts = 1000 # Start learning after 1k steps
@@ -80,10 +86,39 @@ class DQNAgent:
 
         # Create and compile our models
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
-        self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
+        self.model = DQN(self.board_dim, self.player_dim, self.action_dim, self.frame_stack).to(self.device)
+        self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim, self.frame_stack).to(self.device)
         self._update_target_model()
         self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, amsgrad=True)
+
+
+    def _get_stacked_state(self, state):
+        """
+        Stack current state with previous frames
+        """
+        # Add current frame to buffer
+        self.frame_buffer.append(state['board'])
+
+        # If we don't have enough frames yet, repeat the first frame
+        while len(self.frame_buffer) < self.frame_stack:
+            self.frame_buffer.appendleft(state['board'])
+
+        # Stack along channel dimension (axis=2)
+        stacked_boards = np.concatenate(list(self.frame_buffer), axis=2)
+
+        return {
+            'board': stacked_boards,  # Shape: (rows, cols, channels * frame_stack)
+            'player': state['player']  # Use current player stats
+        }
+
+
+    def reset_episode(self):
+        """
+        Reset frame buffer at start of new episode
+
+        :return: None
+        """
+        self.frame_buffer.clear()
 
 
     def _update_target_model(self):
@@ -115,11 +150,14 @@ class DQNAgent:
         :param terminal: True if the next state is terminal, false otherwise
         :return: None
         """
-        self.memory.append((state, action, reward, next_state, terminal))
-        self.latest_experience = (state, action, reward, next_state, terminal)
+        stacked_state = self._get_stacked_state(state)
+        stacked_next_state = self._get_stacked_state(next_state)
+
+        self.memory.append((stacked_state, action, reward, stacked_next_state, terminal))
+        self.latest_experience = (stacked_state, action, reward, stacked_next_state, terminal)
 
 
-    def act(self, state, training=True):
+    def act(self, state, legal_mask, training=True):
         """
         Action is chosen with tradeoff between exploration (taking random action)
         and exploitation (taking action maximizing Q), determined by explore_rate.
@@ -128,16 +166,24 @@ class DQNAgent:
         :param training: True if the agent wishes to explore, False otherwise
         :return: The choice made.
         """
+        stacked_state = self._get_stacked_state(state)
+
         # Exploration
         if training and np.random.random() <= self.explore_rate:
-            return random.randrange(self.action_dim)
+            legal_actions = np.where(legal_mask)[0] # Get indices of legal actions
+            return np.random.choice(legal_actions)
 
         # Exploitation
         with torch.no_grad():
-            board_tensor = torch.FloatTensor(state['board']).unsqueeze(0).to(self.device)
-            player_tensor = torch.FloatTensor(state['player']).unsqueeze(0).to(self.device)
+            board_tensor = torch.FloatTensor(stacked_state['board']).unsqueeze(0).to(self.device)
+            player_tensor = torch.FloatTensor(stacked_state['player']).unsqueeze(0).to(self.device)
             q_values = self.model(board_tensor, player_tensor)
-            return q_values.argmax().item()
+
+            # Convert legal mask to tensor and apply masking
+            legal_mask_tensor = torch.BoolTensor(legal_mask).to(self.device)
+            masked_q = torch.where(legal_mask_tensor, q_values, torch.tensor(-float('inf')).to(self.device))
+
+            return masked_q.argmax().item()
 
 
     def replay(self):
