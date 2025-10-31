@@ -114,6 +114,11 @@ class DragonSweeperEnv(gym.Env):
         # Action space: 0-129 for selected grid cells, 130 for level-up
         self.action_space = gym.spaces.Discrete(self.ROWS * self.COLS + 1)
 
+        # Preallocate buffers to avoid creating new arrays every step
+        self._board_buffer = np.zeros((self.ROWS, self.COLS, self.BOARD_CHANNELS), dtype=np.float32)
+        self._player_buffer = np.zeros((self.PLAYER_CHANNELS,), dtype=np.float32)
+
+
     def _get_obs(self):
         """
         Translate the environment state into an observation for the agent.
@@ -126,7 +131,8 @@ class DragonSweeperEnv(gym.Env):
         """
 
         # Translate game to board space
-        board_space = np.zeros((self.ROWS, self.COLS, self.BOARD_CHANNELS), dtype=np.float32)
+        board_space = self._board_buffer
+        board_space.fill(0)
 
         # Loop through every cell and translate it
         for row in range(self.ROWS):
@@ -182,18 +188,14 @@ class DragonSweeperEnv(gym.Env):
 
 
         # Translate game to player space
-        player_space = np.array([
-            self.game.curr_health / self.MAX_HP,
-            self.game.max_health / self.MAX_HP,
-            min(1.0, self.game.xp / self.MAX_XP), # Clip since MAX_XP is estimate, but should never really be that high anyways
-            self.game.get_required_level_xp() / self.MAX_XP_REQUIRED
-        ], dtype=np.float32)
+        player_space = self._player_buffer
+        player_space[self.CURRENT_HP_IDX] = self.game.curr_health / self.MAX_HP
+        player_space[self.MAX_HP_IDX] = self.game.max_health / self.MAX_HP
+        player_space[self.CURRENT_XP_IDX] = min(1.0, self.game.xp / self.MAX_XP) # Clip since MAX_XP is estimate, but should never really be that high anyway
+        player_space[self.XP_REQUIRED_IDX] = self.game.get_required_level_xp() / self.MAX_XP_REQUIRED
 
         # Return Observation
-        return {
-            "board": board_space,
-            "player": player_space
-        }
+        return {"board": board_space, "player": player_space}
 
 
     def _get_info(self):
@@ -252,7 +254,8 @@ class DragonSweeperEnv(gym.Env):
         self.game.reset_game()
 
         return self._get_obs(), self._get_info()
-    
+
+
     # Convert an action to a board position *assuming it can be converted* 
     # This function deliberately doesn't have a check for levelling up
     # Since such a guard would force everyone to include a potentially superfluous if
@@ -260,6 +263,7 @@ class DragonSweeperEnv(gym.Env):
         ROW = action // self.COLS
         COL = action % self.COLS
         return ROW, COL
+
 
     def _calculate_reward(self, old_obs, action, new_obs, win, alive, success, prev_hp):
         """
@@ -273,29 +277,29 @@ class DragonSweeperEnv(gym.Env):
 
         # If the agent dies, give large negative reward (but less than nonsense)
         if not alive:
-            return -30
+            return -1.0 # -30
 
         if win: # Reward winning heavily (though this will likely enver occur)
-            return 200
+            return 1.0 # 200
 
         # Reward based on how effective the level up was
         if action == self.LEVEL_UP_INDEX or self.game.last_touched == Actors.MEDIKIT:
             if prev_hp == 1:
-                return 20 # Perfect level up
+                return 0.5 # 20 Perfect level up
             elif prev_hp == 2:
-                return 5 # Slightly off
+                return 0.2 # 5 Slightly off
             else:
-                return -1 # Inefficient
+                return -0.2 # -1 Inefficient
 
         # Clicking anything SAFE should be heavily rewarded (agent should always take this action is available)
         if self.game.last_touched in self.SAFE_ACTORS:
-            return 20
+            return 1.0 # 20
 
         # The agent can't differentiate between chest and mimics. However, if the mimic killed the agent, that
         # case would already be covered under 'if not alive'. So, either the agent touched the real chest (which
         # is very good), or the agent touched the mimic and survived (which is also very good)
         if self.game.last_touched == Actors.CHEST or self.game.last_touched == Actors.MIMIC:
-            return 10
+            return 0.25 # 10
 
         # We need row and col for the following checks
         row, col = self._action_pos(action)
@@ -304,7 +308,7 @@ class DragonSweeperEnv(gym.Env):
         # If the agent clicked on a revealed cell that did something and didn't kill us, typically we want to
         # reward that
         if old_board[row, col, self.STATUS_IDX] == self.CELL_REVEALED:
-            return 5
+            return 0.2 # 5
 
         # Here's the hard part. We want to reward SMART selection of unknown squares.
         # 1) if any of the  surrounding squares have a zero, we know it was safe to click, so all good.
@@ -340,18 +344,18 @@ class DragonSweeperEnv(gym.Env):
 
                 # Return good reward if cell indicates that the cell clicked was safe to click (point 1)
                 if adj_power == 0 and adj_mines == 0: # Proves 1)
-                    return 15
+                    return 0.75 #15
 
                 # Return decent reward if cell indicates that the cell clicked wouldn't kill us (point 2)
                 if adj_power < prev_hp and adj_mines == 0: # Prove 2)
-                    return 5
+                    return 0.4 # 5
 
         # Penalize if the agent just made a random guess with no information (point 3)
         if not adj_revealed:
-            return -10
+            return -0.5#-10
 
         # Reward slightly if they had at least SOME information
-        return 1
+        return 0.1 # 1
 
 
     def step(self, action):

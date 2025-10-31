@@ -2,6 +2,7 @@ import gymnasium as gym
 from Agents.DQNAgent import DQNAgent
 import torch
 import random
+import numpy as np
 
 
 def save_model(agent, name):
@@ -52,7 +53,6 @@ def test_model(episodes, model_path):
 
     for _ in range(episodes):
         state, _ = env.reset()
-        agent.reset_episode()
         terminated = False
         truncated = False
 
@@ -81,18 +81,18 @@ def train_model(episodes):
     action_size = env.action_space.n
 
     # Create agent with frame stacking
-    agent = DQNAgent(board_dim, player_dim, action_size, frame_stack=4)
+    agent = DQNAgent(board_dim, player_dim, action_size)
+
+    # Episode tracking stats
+    total_reward = 0
+    total_steps = 0
+    total_episodes = 0
+    sanity_check = np.float32(-1000.0)
 
     for episode in range(episodes):
         state, info = env.reset()
-        agent.reset_episode()
         terminated = False
         truncated = False
-
-        # Episode tracking stats
-        total_reward = 0
-        total_steps = 0
-        explore_rate = 0
 
         # Start game
         while not (terminated or truncated):
@@ -101,11 +101,15 @@ def train_model(episodes):
             action = agent.act(state, legal_mask)
             next_state, reward, terminated, truncated, info = env.step(action)
 
+            # Sanity check
+            if reward < sanity_check:
+                print("WOAH OOPS! ILLEGAL MOVE FOR SOME REASON")
+
             # Store the experience
             agent.remember(state, action, reward, next_state, terminated)
 
             # Train on batch experiences
-            explore_rate = agent.replay()
+            agent.replay()
 
             # Update state
             state = next_state
@@ -115,10 +119,14 @@ def train_model(episodes):
             total_steps += 1
 
         # Track training stats
-        won = info['hp'] > 0
-        print(build_summary(episode, info['score'], info['last touched'], total_reward, total_steps, won, explore_rate))
-
+        total_episodes += 1
         if (episode + 1) % 500 == 0:
+            print(f"Episode: {episode} | Average Reward: {round(total_reward / total_steps, 2)} ({total_reward} reward over {total_steps} steps) | Average episode length: {round(total_steps / total_episodes, 2)}")
+            total_steps = 0
+            total_reward = 0
+            total_episodes = 0
+
+        if (episode + 1) % 5000 == 0:
             save_model(agent, f'{episode}_checkpoint')
 
     # Save model at the end

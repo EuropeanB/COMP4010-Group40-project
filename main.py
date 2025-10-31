@@ -29,19 +29,11 @@ if __name__ == "__main__":
 
 import DQNAgentTraining
 import REINFORCEAgentTraining
-import cProfile
-import pstats
-from line_profiler import LineProfiler
 
 if __name__ == "__main__":
-    episodes = 400
+    episodes = 1_000_000
     #DQNAgentTraining.train_model(episodes)
-    #DQNAgentTraining.test_model(episodes, "Models/best_model.pth")
-
-    profiler = cProfile.Profile()
-    profiler.runcall(DQNAgentTraining.train_model, episodes)
-    stats = pstats.Stats(profiler)
-    stats.sort_stats('cumulative').print_stats(20)
+    DQNAgentTraining.test_model(episodes, "Models/19999_checkpoint.pth")
 
     #REINFORCEAgentTraining.train_model(episodes)
     #REINFORCEAgentTraining.test_model(episodes, "Models/best_model.pth")

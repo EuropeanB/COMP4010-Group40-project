@@ -6,17 +6,24 @@ import numpy as np
 import random
 
 
+class PrioritizedReplayBuffer:
+    def __init__(self, capacity, alpha=0.6):
+        self.capacity = capacity
+        self.alpha = alpha
+        self.buffer = []
+        self.priorities = []
+        self.pos = 0
+
+
 class DQN(nn.Module):
-    def __init__(self, board_shape, player_dim, num_actions, frame_stack=4):
+    def __init__(self, board_shape, player_dim, num_actions):
         super(DQN, self).__init__()
 
         rows, cols, channels = board_shape
-        self.frame_stack = frame_stack
-        self.input_channels = channels * frame_stack
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(self.input_channels, 32, kernel_size=3, padding=1),
+            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -39,7 +46,7 @@ class DQN(nn.Module):
 
     def forward(self, board_obs, player_obs):
         # board_obs: [batch, rows, cols, channels] -> [batch, channels, rows, cols]
-        board_obs = board_obs.permute(0, 3, 1, 2)
+        board_obs = board_obs.contiguous().permute(0, 3, 1, 2)
 
         # Process the board with CNN
         board_features = self.board_conv(board_obs)
@@ -52,19 +59,14 @@ class DQN(nn.Module):
         return self.fc(combined)
 
 
-
 class DQNAgent:
-    def __init__(self, board_dim, player_dim, action_dim, frame_stack=4):
+    def __init__(self, board_dim, player_dim, action_dim):
         # Initialization
         self.board_dim = board_dim
         self.player_dim = player_dim
         self.action_dim = action_dim
-        self.frame_stack = frame_stack
         self.total_steps = 0
         self.latest_experience = None
-
-        # Initialize frame stack buffer
-        self.frame_buffer = deque(maxlen=frame_stack)
 
         # Initialize agent memory
         self.memory = deque(maxlen=10000)
@@ -72,53 +74,27 @@ class DQNAgent:
         # --- AGENT HYPERPARAMETERS ---
         self.discount = 0.99
         self.batch_size = 64
-        self.learning_rate = 0.005
+        self.learning_rate = 0.001
 
         self.explore_rate = 1.0 # Start at 100%
-        self.min_explore_rate = 0.2 # Keep at 10% exploration
-        self.explore_decay_steps = 20000 # Reach minimum exploration in 20k steps
+        self.min_explore_rate = 0.1 # Keep at 10% exploration
+        self.explore_decay_steps = 100_000 # Reach minimum exploration in 20k steps
         self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
 
         self.learning_starts = 1000 # Start learning after 1k steps
         self.target_update_freq = 1000  # Update target model every 1k steps
-        self.train_frequency = 1 # Train on memories every step
+        self.train_frequency = 1 # Train on memories every 8 steps
 
 
         # Create and compile our models
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = DQN(self.board_dim, self.player_dim, self.action_dim, self.frame_stack).to(self.device)
-        self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim, self.frame_stack).to(self.device)
+        self.model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
+        self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
         self._update_target_model()
         self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, amsgrad=True)
 
-
-    def _get_stacked_state(self, state):
-        """
-        Stack current state with previous frames
-        """
-        # Add current frame to buffer
-        self.frame_buffer.append(state['board'])
-
-        # If we don't have enough frames yet, repeat the first frame
-        while len(self.frame_buffer) < self.frame_stack:
-            self.frame_buffer.appendleft(state['board'])
-
-        # Stack along channel dimension (axis=2)
-        stacked_boards = np.concatenate(list(self.frame_buffer), axis=2)
-
-        return {
-            'board': stacked_boards,  # Shape: (rows, cols, channels * frame_stack)
-            'player': state['player']  # Use current player stats
-        }
-
-
-    def reset_episode(self):
-        """
-        Reset frame buffer at start of new episode
-
-        :return: None
-        """
-        self.frame_buffer.clear()
+        # Preallocate inf tensor for legal masking
+        self._inf_tensor = torch.full((1,), -float('inf'), device=self.device)
 
 
     def _update_target_model(self):
@@ -150,11 +126,8 @@ class DQNAgent:
         :param terminal: True if the next state is terminal, false otherwise
         :return: None
         """
-        stacked_state = self._get_stacked_state(state)
-        stacked_next_state = self._get_stacked_state(next_state)
-
-        self.memory.append((stacked_state, action, reward, stacked_next_state, terminal))
-        self.latest_experience = (stacked_state, action, reward, stacked_next_state, terminal)
+        self.memory.append((state, action, reward, next_state, terminal))
+        self.latest_experience = (state, action, reward, next_state, terminal)
 
 
     def act(self, state, legal_mask, training=True):
@@ -166,8 +139,6 @@ class DQNAgent:
         :param training: True if the agent wishes to explore, False otherwise
         :return: The choice made.
         """
-        stacked_state = self._get_stacked_state(state)
-
         # Exploration
         if training and np.random.random() <= self.explore_rate:
             legal_actions = np.where(legal_mask)[0] # Get indices of legal actions
@@ -175,13 +146,13 @@ class DQNAgent:
 
         # Exploitation
         with torch.no_grad():
-            board_tensor = torch.FloatTensor(stacked_state['board']).unsqueeze(0).to(self.device)
-            player_tensor = torch.FloatTensor(stacked_state['player']).unsqueeze(0).to(self.device)
+            board_tensor = torch.as_tensor(state['board'], device=self.device).unsqueeze(0)
+            player_tensor = torch.as_tensor(state['player'], device=self.device).unsqueeze(0)
             q_values = self.model(board_tensor, player_tensor)
 
             # Convert legal mask to tensor and apply masking
-            legal_mask_tensor = torch.BoolTensor(legal_mask).to(self.device)
-            masked_q = torch.where(legal_mask_tensor, q_values, torch.tensor(-float('inf')).to(self.device))
+            legal_mask_tensor = torch.as_tensor(legal_mask, dtype=torch.bool, device=self.device)
+            masked_q = torch.where(legal_mask_tensor, q_values, self._inf_tensor)
 
             return masked_q.argmax().item()
 
@@ -228,28 +199,26 @@ class DQNAgent:
             terminals.append(terminal)
 
         # Convert to torch datatypes
-        board_states = torch.FloatTensor(np.array(board_states)).to(self.device)
-        player_states = torch.FloatTensor(np.array(player_states)).to(self.device)
-        board_next_states = torch.FloatTensor(np.array(board_next_states)).to(self.device)
-        player_next_states = torch.FloatTensor(np.array(player_next_states)).to(self.device)
-        actions = torch.LongTensor(np.array(actions)).unsqueeze(1).to(self.device)
-        rewards = torch.FloatTensor(np.array(rewards)).unsqueeze(1).to(self.device)
-        terminals = torch.BoolTensor(np.array(terminals)).unsqueeze(1).to(self.device)
+        board_states = torch.as_tensor(np.array(board_states), dtype=torch.float32, device=self.device)
+        player_states = torch.as_tensor(np.array(player_states), dtype=torch.float32, device=self.device)
+        board_next_states = torch.as_tensor(np.array(board_next_states), dtype=torch.float32, device=self.device)
+        player_next_states = torch.as_tensor(np.array(player_next_states), dtype=torch.float32, device=self.device)
+        actions = torch.as_tensor(np.array(actions), dtype=torch.long, device=self.device).unsqueeze(1)
+        rewards = torch.as_tensor(np.array(rewards), dtype=torch.float32, device=self.device).unsqueeze(1)
+        terminals = torch.as_tensor(np.array(terminals), dtype=torch.bool, device=self.device).unsqueeze(1)
 
         # Compute Q-values for current states
-        q_values = self.model(board_states, player_states).gather(1, actions)
+        q_values = self.model(board_states, player_states)
+        q_values = q_values.gather(1, actions)
 
         # Compute target Q-values (using target model)
         with torch.no_grad():
-            '''next_q = self.target_model(board_next_states, player_next_states)
-            max_next_q = next_q.max(1)[0].unsqueeze(1)
-            targets = torch.where(terminals, rewards, rewards + self.discount * max_next_q)'''
             next_actions = self.model(board_next_states, player_next_states).argmax(1, keepdim=True)
             max_next_q = self.target_model(board_next_states, player_next_states).gather(1, next_actions)
             targets = torch.where(terminals, rewards, rewards + self.discount * max_next_q)
 
         # Compute loss and optimize
-        loss = nn.MSELoss()(q_values, targets)
+        loss = nn.SmoothL1Loss()(q_values, targets)
         self.optimizer.zero_grad()
         loss.backward()
 

@@ -265,7 +265,10 @@ class DungeonGenerator:
             if i > 2: # 2 Contain Medikit (The rest contain 5 XP, handled in main loop)
                 self.board[chest_row][chest_col].contains_medikit = True
             self.rem.remove((minotaur_row, minotaur_col))
-            self.rem.remove((chest_row, chest_col))
+            try:
+                self.rem.remove((chest_row, chest_col))
+            except:
+                return False
 
         return True
 
