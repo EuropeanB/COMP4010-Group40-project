@@ -6,15 +6,6 @@ import numpy as np
 import random
 
 
-class PrioritizedReplayBuffer:
-    def __init__(self, capacity, alpha=0.6):
-        self.capacity = capacity
-        self.alpha = alpha
-        self.buffer = []
-        self.priorities = []
-        self.pos = 0
-
-
 class DQN(nn.Module):
     def __init__(self, board_shape, player_dim, num_actions):
         super(DQN, self).__init__()
@@ -85,9 +76,11 @@ class DQNAgent:
         self.target_update_freq = 1000  # Update target model every 1k steps
         self.train_frequency = 1 # Train on memories every 8 steps
 
+        #
+        self.device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Create and compile our models
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
         self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
         self._update_target_model()

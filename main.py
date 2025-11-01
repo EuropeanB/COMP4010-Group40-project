@@ -32,8 +32,8 @@ import REINFORCEAgentTraining
 
 if __name__ == "__main__":
     episodes = 1_000_000
-    #DQNAgentTraining.train_model(episodes)
-    DQNAgentTraining.test_model(episodes, "Models/19999_checkpoint.pth")
+    DQNAgentTraining.train_model(episodes)
+    #DQNAgentTraining.test_model(episodes, "Models/19999_checkpoint.pth")
 
     #REINFORCEAgentTraining.train_model(episodes)
     #REINFORCEAgentTraining.test_model(episodes, "Models/best_model.pth")
