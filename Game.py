@@ -2,6 +2,7 @@ from Actors import Actors
 from DungeonGenerator import DungeonGenerator
 import random
 import math
+import numpy as np
 
 class Game:
     def __init__(self):
@@ -24,7 +25,7 @@ class Game:
         self.board = None
 
 
-    def reset_game(self):
+    def reset_game(self, seed=None):
         """
         Resets the dungeon with a new board and reset player stats
         """
@@ -33,6 +34,10 @@ class Game:
         self.xp = 0
         self.max_health = 6
         self.curr_health = 6
+
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
 
         self.board = False
         while not self.board:

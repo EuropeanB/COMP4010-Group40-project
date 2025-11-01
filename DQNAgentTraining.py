@@ -3,6 +3,7 @@ from Agents.DQNAgent import DQNAgent
 import torch
 import random
 import numpy as np
+import Actors
 
 
 def save_model(agent, name):
@@ -40,7 +41,7 @@ def build_summary(episode, score, cod, rewards, steps, win, explore_rate):
     return output
 
 
-def test_model(episodes, model_path):
+def test_model(episodes, model_path, seed=None):
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
     env = gym.make("Dragonsweeper-v0", render_mode='human')
     unw_env = env.unwrapped
@@ -52,7 +53,7 @@ def test_model(episodes, model_path):
     load_model(agent, model_path)
 
     for _ in range(episodes):
-        state, _ = env.reset()
+        state, _ = env.reset(seed=seed)
         terminated = False
         truncated = False
 
@@ -61,10 +62,12 @@ def test_model(episodes, model_path):
             action = agent.act(state, legal_mask, training=False)
 
             # Apply action
-            next_state, _, terminated, truncated, info = env.step(action)
+            next_state, reward, terminated, truncated, info = env.step(action)
 
             # Print information
             print(info)
+            print(f"REWARD FOR THAT ACTION: {reward}")
+            input("Press any key to continue...")
 
             # Update state
             state = next_state
@@ -89,8 +92,13 @@ def train_model(episodes):
     total_episodes = 0
     sanity_check = np.float32(-1000.0)
 
+    memory = None
+    total_orbs = 0
+    epsilon = 0
+    seed = 101244889
+
     for episode in range(episodes):
-        state, info = env.reset()
+        state, info = env.reset(seed=seed)
         terminated = False
         truncated = False
 
@@ -101,6 +109,9 @@ def train_model(episodes):
             action = agent.act(state, legal_mask)
             next_state, reward, terminated, truncated, info = env.step(action)
 
+            if info['last touched'] == Actors.Actors.ORB.name:
+                total_orbs += 1
+
             # Sanity check
             if reward < sanity_check:
                 print("WOAH OOPS! ILLEGAL MOVE FOR SOME REASON")
@@ -109,7 +120,7 @@ def train_model(episodes):
             agent.remember(state, action, reward, next_state, terminated)
 
             # Train on batch experiences
-            agent.replay()
+            epsilon = agent.replay()
 
             # Update state
             state = next_state
@@ -121,13 +132,30 @@ def train_model(episodes):
         # Track training stats
         total_episodes += 1
         if (episode + 1) % 500 == 0:
-            print(f"Episode: {episode} | Average Reward: {round(total_reward / total_steps, 2)} ({total_reward} reward over {total_steps} steps) | Average episode length: {round(total_steps / total_episodes, 2)}")
+            print(f"Episode: {episode} | Average Reward: {round(total_reward / total_steps, 2)} ({total_reward} reward over {total_steps} steps) | Average episode length: {round(total_steps / total_episodes, 2)}"
+                  f" Latest epsilon: {round(epsilon, 2)}")
             total_steps = 0
             total_reward = 0
             total_episodes = 0
 
-        if (episode + 1) % 5000 == 0:
+        if (episode + 1) % 1000 == 0:
             save_model(agent, f'{episode}_checkpoint')
+
+    count = 0
+    for state, action, reward, next_state, terminal in memory:
+        if action == 130:
+            continue
+        row = action // 13
+        col = action % 13
+
+        if state['board'][row][col][5]:
+            count += 1
+
+    print(f"Episodes: {episodes}")
+    print(f"Orbs clicked in training: {total_orbs}")
+    print(f"Number of safe to click items in memory at end: {count}")
+    print(f"Number of items in memory {len(memory)}")
+
 
     # Save model at the end
     save_model(agent, 'best_model')
