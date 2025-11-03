@@ -277,22 +277,22 @@ class DragonSweeperEnv(gym.Env):
 
         # If the agent dies, give large negative reward (but less than nonsense)
         if not alive:
-            return -0.8
+            return -0.9
 
         if win: # Reward winning heavily (though this will likely enver occur)
             return 1.0
 
+        # We need row and col for the following checks
+        row, col = self._action_pos(action)
+
         # Reward based on how effective the level up was
-        if action == self.LEVEL_UP_INDEX or self.game.last_touched == Actors.MEDIKIT:
+        if action == self.LEVEL_UP_INDEX or old_board[row, col, self.MEDIKIT_IDX]:
             if prev_hp == 1:
                 return 1.0 # Perfect level up
             elif prev_hp == 2:
                 return 0.1 # Slightly off
             else:
                 return -0.4 # Inefficient
-
-        # We need row and col for the following checks
-        row, col = self._action_pos(action)
 
         # Clicking anything SAFE should be heavily rewarded (agent should always take this action is available)
         if old_board[row, col, self.SAFE_IDX]:
@@ -352,7 +352,7 @@ class DragonSweeperEnv(gym.Env):
 
         # Penalize if the agent just made a random guess with no information (point 3)
         if not adj_revealed:
-            return -0.8
+            return -0.7
 
         # Reward slightly if they had at least SOME information
         return 0.0

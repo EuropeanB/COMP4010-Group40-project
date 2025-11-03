@@ -63,6 +63,7 @@ class Environments:
         self.observations = [None for _ in range(num_actors)]
         self.done = [False for _ in range(num_actors)]
         self.total_rewards = [0 for _ in range(num_actors)]
+        self.episode_steps  = [0 for _ in range(num_actors)]
         self.num_actors = num_actors
 
         for env_id in range(num_actors):
@@ -73,6 +74,7 @@ class Environments:
 
     def reset_env(self, env_id):
         self.total_rewards[env_id] = 0
+        self.episode_steps[env_id] = 0
         obs, info = self.envs[env_id].reset()
         self.observations[env_id] = obs
         self.done[env_id] = False
@@ -82,6 +84,7 @@ class Environments:
         observation, reward, terminated, truncated, info = self.envs[env_id].step(action)
         self.done[env_id] = terminated or truncated
         self.total_rewards[env_id] += reward
+        self.episode_steps[env_id] += 1
         self.observations[env_id] = observation
 
         return observation, reward, terminated, truncated, info
@@ -103,15 +106,23 @@ def PPO(envs, actor_critic, device='cpu'):
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
     vf_coef_c1 = 1 # Weight of the value loss in total PPO loss
     ent_coef_c2 = 0.01 # Weight of the entropy bonus in PPO loss
-    num_iterations = 100#40_000
+    num_iterations = 20_000
 
     # Create optimizer and scheduler
     optimizer = torch.optim.Adam(actor_critic.parameters(), lr=2.5e-4)
 
     # For tracking progress
     max_reward = 0
-    total_rewards = [[] for _ in range(len(envs))]
-    smoothed_rewards = [[] for _ in range(len(envs))]
+    episode_rewards = np.zeros(len(envs))
+    total_rewards_list = []
+    smoothed_rewards = []
+    smoothing_factor = 0.9
+    episode_lengths_list = []
+
+    # Loading checkpoint if needed
+    '''checkpoint = torch.load("Models/checkpoint_20.pth")
+    actor_critic.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])'''
 
     for iteration in tqdm(range(num_iterations)):
         advantages = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
@@ -139,6 +150,7 @@ def PPO(envs, actor_critic, device='cpu'):
             next_obs, rewards, terms, truncs, infos = [], [], [], [], []
             for env_id, action in enumerate(actions):
                 obs, reward, terminated, truncated, info = envs.step(env_id, action.item()) # why action.item() and not just "action"?
+                episode_rewards[env_id] += reward
 
                 # Append results
                 next_obs.append(obs)
@@ -147,15 +159,22 @@ def PPO(envs, actor_critic, device='cpu'):
                 truncs.append(truncated)
                 infos.append(info)
 
-                # Track max reward
-                if terminated and envs.total_rewards[env_id] > max_reward:
-                    max_reward = envs.total_rewards[env_id]
-                    torch.save(actor_critic.cpu(), "best_agent")
-                    actor_critic.to(device)
-
-                # Reset the environment if it is done
+                # Track rewards and best performing models
                 if terminated or truncated:
-                    total_rewards[env_id].append(envs.total_rewards[env_id])
+                    total_rewards_list.append(envs.total_rewards[env_id])
+                    episode_lengths_list.append(envs.episode_steps[env_id])
+
+                    if smoothed_rewards:
+                        smoothed_rewards.append(smoothing_factor * smoothed_rewards[-1] + (1 - smoothing_factor) * envs.total_rewards[env_id])
+                    else:
+                        smoothed_rewards.append(envs.total_rewards[env_id])
+
+                    if envs.total_rewards[env_id] > max_reward:
+                        max_reward = envs.total_rewards[env_id]
+                        torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Latest/Models/best_agent.pth")
+
+                    # Reset the environment
+                    episode_rewards[env_id] = 0
                     envs.reset_env(env_id)
 
             # Log into buffers
@@ -191,6 +210,7 @@ def PPO(envs, actor_critic, device='cpu'):
         flat_actions = buffer_actions.reshape(-1)
         flat_old_logprobs = buffer_logprobs.reshape(-1)
         flat_advantages = advantages.reshape(-1)
+        flat_advantages = (flat_advantages - flat_advantages.mean()) / (flat_advantages.std() + 1e-8) # Added for testing
         flat_returns = (advantages + buffer_values[:, :T]).reshape(-1)
         flat_old_values = buffer_values[:, :T].reshape(-1)
 
@@ -206,7 +226,8 @@ def PPO(envs, actor_critic, device='cpu'):
                 log_probs = m.log_prob(b_actions)
                 ratio = torch.exp(log_probs - b_logprob_old)
                 policy_loss_1 = b_adv * ratio
-                clip_range =  0.1 * (1.0 - iteration / num_iterations)
+                #clip_range =  0.1 * (1.0 - iteration / num_iterations)
+                clip_range = 0.1
                 policy_loss_2 = b_adv * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
 
@@ -214,8 +235,6 @@ def PPO(envs, actor_critic, device='cpu'):
                 value_pred_clipped = b_old_values + torch.clamp(values - b_old_values, -clip_range, +clip_range)
                 value_loss_unclipped = (values - b_returns) ** 2
                 value_loss_clipped = (value_pred_clipped - b_returns) ** 2
-                #value_loss_1 = F.mse_loss(b_returns, values.squeeze(-1), reduction='none')
-                #value_loss_2 = F.mse_loss(b_returns, torch.clamp(values.squeeze(-1), values.squeeze(-1) - clip_range, values.squeeze(-1) + clip_range), reduction='none')
                 value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
                 # Compute total loss
@@ -227,120 +246,16 @@ def PPO(envs, actor_critic, device='cpu'):
                 torch.nn.utils.clip_grad_norm_(actor_critic.parameters(), 0.5)
                 optimizer.step()
 
+        # Log reward
+        if iteration % 10 == 0:
+            avg_reward = np.mean(total_rewards_list[-len(envs):]) if total_rewards_list else 0
+            smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
+            avg_length = np.mean(episode_lengths_list[-100:]) if episode_lengths_list else 0
+            print(f"\nIteration {iteration} | Avg reward (recent episodes): {avg_reward:.2f} | Smoothed reward: {smooth_reward:.2f} | Avg. episode length: {avg_length:.1f}")
 
-### NON VECTORIZED LOOP ###
-'''
-    for iteration in tqdm(range(num_iterations)):
-        advantages = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-        buffer_board_states = torch.zeros((len(envs), T, rows, cols, channels), dtype=torch.float32, device=device)
-        buffer_player_states = torch.zeros((len(envs), T, player_dim), dtype=torch.float32, device=device)
-        buffer_actions = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-        buffer_logprobs = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-        buffer_state_values = torch.zeros((len(envs), T+1), dtype=torch.float32, device=device)
-        buffer_rewards = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-        buffer_is_terminal = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-
-        # This can be done in parallel and will be much more efficient
-        for env_id in range(len(envs)):
-            with torch.no_grad():
-                # Calculate values for time steps 0 to T-1
-                for t in range(T):
-                    obs = envs.observations[env_id]
-                    board_obs = torch.as_tensor(obs['board'], device=device).unsqueeze(0)
-                    player_obs = torch.as_tensor(obs['player'], device=device).unsqueeze(0)
-                    logits, value = actor_critic(board_obs, player_obs)
-                    logits, value = logits.squeeze(0), value.squeeze(0)
-                    m = torch.distributions.categorical.Categorical(logits=logits)
-
-                    if envs.done[env_id]:
-                        action = torch.tensor([1], device=device)
-                    else:
-                        action = m.sample()
-
-                    log_prob = m.log_prob(action)
-                    observation, reward, terminated, truncated, info = envs.step(env_id, action)
-                    reward = np.sign(reward) # Reward clipping (not sure how this applies in our case)
-
-                    # Log everything
-                    buffer_board_states[env_id, t] = board_obs
-                    buffer_player_states[env_id, t] = player_obs
-                    buffer_actions[env_id, t] = torch.as_tensor([action], device=device)
-                    buffer_logprobs[env_id, t] = log_prob
-                    buffer_state_values[env_id, t] = value
-                    buffer_rewards[env_id, t] = reward
-                    buffer_is_terminal[env_id, t] = (terminated or truncated)
-
-                    # If model's game ends
-                    if terminated:
-                        # Save model if best performer so far
-                        if envs.total_rewards[env_id] > max_reward:
-                            max_reward = envs.total_rewards[env_id]
-                            torch.save(actor_critic.cpu(), "best_agent")
-                            actor_critic.to(device)
-
-                        # Log total reward and reset environment
-                        total_rewards[env_id].append(envs.total_rewards[env_id])
-                        envs.reset_env(env_id)
-
-                # Calculate value a time step T
-                obs = envs.observations[env_id]
-                board_obs = torch.as_tensor(obs['board'], device=device).unsqueeze(0)
-                player_obs = torch.as_tensor(obs['player'], device=device).unsqueeze(0)
-                values = actor_critic(board_obs, player_obs)[1].squeeze(0)
-                buffer_state_values[env_id, T] = values
-
-                # Compute advantage estimates A^1, ... , A^
-                for t in range(T-1, -1, -1):
-                    next_non_terminal = 1.0 - buffer_is_terminal[env_id, t]
-                    delta_t = buffer_rewards[env_id, t] + gamma * buffer_state_values[env_id, t+1] * next_non_terminal - buffer_state_values[env_id, t]
-                    if t == (T-1):
-                        A_t = delta_t
-                    else:
-                        A_t = delta_t + gamma * gae_parameter * advantages[env_id, t+1] * next_non_terminal
-                    advantages[env_id, t] = A_t
-
-        advantages_data_loader = DataLoader(
-            TensorDataset(
-                advantages.reshape(advantages.shape[0] * advantages.shape[1]),
-                buffer_board_states.reshape(-1, rows, cols, channels),
-                buffer_player_states.reshape(-1, player_dim),
-                buffer_actions.reshape(-1),
-                buffer_logprobs.reshape(-1),
-                buffer_state_values[:, :T].reshape(-1)
-            ),
-            batch_size=batch_size,
-            shuffle=True
-        )
-
-        for epoch in range(K):
-            for batch_advantages in advantages_data_loader:
-                b_adv, board_obs, player_obs, action_that_was_taken, old_log_prob, old_state_values = batch_advantages
-
-                logits, value = actor_critic(board_obs, player_obs)
-                logits, value = logits.squeeze(0), value.squeeze(-1)
-                m = torch.distributions.categorical.Categorical(logits=logits)
-                log_prob = m.log_prob(action_that_was_taken)
-                ratio = torch.exp(log_prob - old_log_prob)
-                returns = b_adv + old_state_values
-
-                # Clipped surrogate objective
-                policy_loss_1 = b_adv * ratio
-                alpha = 1.0 - iteration / num_iterations
-                clip_range = 0.1 * alpha
-                policy_loss_2 = b_adv * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
-                policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
-
-                # Clipped value loss
-                value_loss1 = F.mse_loss(returns, value, reduction='none')
-                value_loss2 = F.mse_loss(returns, torch.clamp(value, value - clip_range, value + clip_range), reduction='none')
-                value_loss = torch.max(value_loss1, value_loss2).mean()
-
-                # Compute total loss
-                loss = policy_loss + ent_coef_c2 * -(m.entropy()).mean() + vf_coef_c1 * value_loss
-
-                # Clip the gradient and optimize
-                optimizer.zero_grad()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(actor_critic.parameters(), 0.5)
-                optimizer.step()
-'''
+        if iteration % 500 == 0 and iteration != 0:
+            torch.save({
+                'iteration': iteration,
+                'model_state_dict': actor_critic.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict()
+            }, f"/Users/arthurteixeira/Desktop/Pycharm/Latest/Models/checkpoint_{iteration}.pth")

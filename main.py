@@ -1,34 +1,4 @@
-'''from Environment import DragonSweeperEnv
-from Agents.DummyAgent import DummyAgent
-
-if __name__ == "__main__":
-    num_games = 200
-    render_mode = "human"
-
-    env = DragonSweeperEnv(render_mode=render_mode)
-    agent = DummyAgent(env.action_space)
-
-    for _ in range(num_games):
-        print("STARTING GAME")
-
-        obs, info = env.reset()
-        terminated = False
-        truncated = False
-
-        while not (terminated or truncated):
-            action = agent.select_action(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            print(action, reward)
-
-            if reward > 0:
-                input("Hit enter")
-
-        print("GAME ENDED")
-
-    env.close()'''
-
 import DQNAgentTraining
-import REINFORCEAgentTraining
 from Agents.PPOAgent import Environments
 from Agents.PPOAgent import ActorCritic
 from Agents.PPOAgent import PPO
@@ -55,11 +25,16 @@ if __name__ == "__main__":
 
     else:
         env = gym.make("Dragonsweeper-v0", render_mode='human')
-        best_actor_critic = torch.load("best_agent")
-        best_actor_critic.to(device)
-        best_actor_critic.eval()
+        board_dim = env.observation_space['board'].shape
+        player_dim = env.observation_space['player'].shape[0]
+        action_size = env.action_space.n
 
-        num_episodes = 10
+        actor_critic = ActorCritic(board_dim, player_dim, action_size).to(device)
+        state_dict = torch.load("Models/best_agent.pth", weights_only=True)
+        actor_critic.load_state_dict(state_dict)
+        actor_critic.eval()
+
+        num_episodes = 100
         for _ in range(num_episodes):
             obs, info = env.reset()
             terminated = False
@@ -70,9 +45,11 @@ if __name__ == "__main__":
                 player_obs = torch.as_tensor(obs['player'], dtype=torch.float32, device=device).unsqueeze(0)
 
                 with torch.no_grad():
-                    logits, _ = best_actor_critic(board_obs, player_obs)
+                    logits, _ = actor_critic(board_obs, player_obs)
                     m = torch.distributions.Categorical(logits=logits)
                     action = m.sample().item()
 
                 obs, reward, terminated, truncated, info = env.step(action)
+                print(info)
                 print(f'REWARD: {reward}')
+                input("Hit enter")
