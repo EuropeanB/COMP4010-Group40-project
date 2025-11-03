@@ -2,7 +2,7 @@ from Actors import Actors
 from DungeonGenerator import DungeonGenerator
 import random
 import math
-
+import numpy as np
 
 class Game:
     def __init__(self):
@@ -25,7 +25,7 @@ class Game:
         self.board = None
 
 
-    def reset_game(self):
+    def reset_game(self, seed=None):
         """
         Resets the dungeon with a new board and reset player stats
         """
@@ -34,6 +34,10 @@ class Game:
         self.xp = 0
         self.max_health = 6
         self.curr_health = 6
+
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
 
         self.board = False
         while not self.board:
@@ -56,13 +60,13 @@ class Game:
 
         :return: True if level up, False if unable
         """
+        self.last_touched = None
         xp_required = self.get_required_level_xp()
 
         # Check if player can even level up
         if self.xp < xp_required:
-            self.last_touched = "LEVEL UP (FAILED)"
             return False
-        self.last_touched = "LEVEL UP (SUCCESSFUL)"
+
 
         # Remove required xp
         self.xp -= xp_required
@@ -87,7 +91,7 @@ class Game:
         :return: (Alive, Win, Success) tuple. Win is True if crown is grabbed. Success is true if state was changed
         """
         cell = self.board[row][col]
-        self.last_touched = cell.actor.name
+        self.last_touched = cell.actor
 
         if cell.actor in [
             Actors.RAT, Actors.BAT, Actors.SKELETON, Actors.GARGOYLE, Actors.SLIME,
