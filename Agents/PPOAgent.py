@@ -192,14 +192,15 @@ def PPO(envs, actor_critic, device='cpu'):
         flat_old_logprobs = buffer_logprobs.reshape(-1)
         flat_advantages = advantages.reshape(-1)
         flat_returns = (advantages + buffer_values[:, :T]).reshape(-1)
+        flat_old_values = buffer_values[:, :T].reshape(-1)
 
         # Create dataset and loader for PPO update
-        dataset = TensorDataset(flat_advantages, flat_board, flat_player, flat_actions, flat_old_logprobs, flat_returns)
+        dataset = TensorDataset(flat_advantages, flat_board, flat_player, flat_actions, flat_old_logprobs, flat_returns, flat_old_values)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         # PPO update
         for _ in range(K):
-            for b_adv, b_board, b_player, b_actions, b_logprob_old, b_returns in loader:
+            for b_adv, b_board, b_player, b_actions, b_logprob_old, b_returns, b_old_values in loader:
                 logits, values = actor_critic(b_board, b_player)
                 m = torch.distributions.Categorical(logits=logits)
                 log_probs = m.log_prob(b_actions)
@@ -210,9 +211,12 @@ def PPO(envs, actor_critic, device='cpu'):
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
 
                 # Clipped value loss
-                value_loss_1 = F.mse_loss(b_returns, values.squeeze(-1), reduction='none')
-                value_loss_2 = F.mse_loss(b_returns, torch.clamp(values.squeeze(-1), values.squeeze(-1) - clip_range, values.squeeze(-1) + clip_range), reduction='none')
-                value_loss = torch.max(value_loss_1, value_loss_2).mean()
+                value_pred_clipped = b_old_values + torch.clamp(values - b_old_values, -clip_range, +clip_range)
+                value_loss_unclipped = (values - b_returns) ** 2
+                value_loss_clipped = (value_pred_clipped - b_returns) ** 2
+                #value_loss_1 = F.mse_loss(b_returns, values.squeeze(-1), reduction='none')
+                #value_loss_2 = F.mse_loss(b_returns, torch.clamp(values.squeeze(-1), values.squeeze(-1) - clip_range, values.squeeze(-1) + clip_range), reduction='none')
+                value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
                 # Compute total loss
                 loss = policy_loss + ent_coef_c2 * -m.entropy().mean() + vf_coef_c1 * value_loss
