@@ -29,11 +29,50 @@ if __name__ == "__main__":
 
 import DQNAgentTraining
 import REINFORCEAgentTraining
+from Agents.PPOAgent import Environments
+from Agents.PPOAgent import ActorCritic
+from Agents.PPOAgent import PPO
+import gymnasium as gym
+import torch
 
 if __name__ == "__main__":
-    episodes = 1_000_000
-    DQNAgentTraining.train_model(episodes)
-    #DQNAgentTraining.test_model(episodes, "Models/19999_checkpoint.pth")
+    train = False # True for training, false for testing
 
-    #REINFORCEAgentTraining.train_model(episodes)
-    #REINFORCEAgentTraining.test_model(episodes, "Models/best_model.pth")
+    gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
+    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    print(f"Using device: {device}")
+
+    if train:
+        num_actors = 8
+        envs = Environments(num_actors)
+
+        board_dim = envs.envs[0].observation_space['board'].shape
+        player_dim = envs.envs[0].observation_space['player'].shape[0]
+        action_size = envs.envs[0].action_space.n
+
+        actor_critic = ActorCritic(board_dim, player_dim, action_size).to(device)
+        PPO(envs, actor_critic, device=device)
+
+    else:
+        env = gym.make("Dragonsweeper-v0", render_mode='human')
+        best_actor_critic = torch.load("best_agent")
+        best_actor_critic.to(device)
+        best_actor_critic.eval()
+
+        num_episodes = 10
+        for _ in range(num_episodes):
+            obs, info = env.reset()
+            terminated = False
+            truncated = False
+
+            while not (terminated or truncated):
+                board_obs = torch.as_tensor(obs['board'], dtype=torch.float32, device=device).unsqueeze(0)
+                player_obs = torch.as_tensor(obs['player'], dtype=torch.float32, device=device).unsqueeze(0)
+
+                with torch.no_grad():
+                    logits, _ = best_actor_critic(board_obs, player_obs)
+                    m = torch.distributions.Categorical(logits=logits)
+                    action = m.sample().item()
+
+                obs, reward, terminated, truncated, info = env.step(action)
+                print(f'REWARD: {reward}')

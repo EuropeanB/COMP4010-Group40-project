@@ -273,41 +273,41 @@ class DragonSweeperEnv(gym.Env):
         """
         # If the agent ever tries something that does NOTHING, give large negative reward
         if not success:
-            return -10000 # Nonsense moves are masked. This should NEVER occur
+            return -1.0 # Nonsense moves are masked. This should NEVER occur
 
         # If the agent dies, give large negative reward (but less than nonsense)
         if not alive:
-            return -30
+            return -0.8
 
         if win: # Reward winning heavily (though this will likely enver occur)
-            return 200
+            return 1.0
 
         # Reward based on how effective the level up was
         if action == self.LEVEL_UP_INDEX or self.game.last_touched == Actors.MEDIKIT:
             if prev_hp == 1:
-                return 20 # Perfect level up
+                return 1.0 # Perfect level up
             elif prev_hp == 2:
-                return 5 # Slightly off
+                return 0.1 # Slightly off
             else:
-                return -1 # Inefficient
+                return -0.4 # Inefficient
 
         # We need row and col for the following checks
         row, col = self._action_pos(action)
 
         # Clicking anything SAFE should be heavily rewarded (agent should always take this action is available)
         if old_board[row, col, self.SAFE_IDX]:
-            return 20
+            return 1.0
 
         # The agent can't differentiate between chest and mimics. However, if the mimic killed the agent, that
         # case would already be covered under 'if not alive'. So, either the agent touched the real chest (which
         # is very good), or the agent touched the mimic and survived (which is also very good)
         if old_board[row, col, self.CHEST_IDX]:
-            return 10
+            return 0.6
 
         # If the agent clicked on a revealed cell that did something and didn't kill us, typically we want to
         # reward that
         if old_board[row, col, self.STATUS_IDX] == self.CELL_REVEALED:
-            return 5
+            return 0.3
 
         # Here's the hard part. We want to reward SMART selection of unknown squares.
         # 1) if any of the  surrounding squares have a zero, we know it was safe to click, so all good.
@@ -344,18 +344,18 @@ class DragonSweeperEnv(gym.Env):
 
                 # Return good reward if cell indicates that the cell clicked was safe to click (point 1)
                 if adj_power == 0 and adj_mines == 0: # Proves 1)
-                    return 15
+                    return 0.8
 
                 # Return decent reward if cell indicates that the cell clicked wouldn't kill us (point 2)
                 if adj_power < prev_hp and adj_mines == 0: # Prove 2)
-                    return 5
+                    return 0.3
 
         # Penalize if the agent just made a random guess with no information (point 3)
         if not adj_revealed:
-            return -10
+            return -0.8
 
         # Reward slightly if they had at least SOME information
-        return 0
+        return 0.0
 
 
     def step(self, action):
