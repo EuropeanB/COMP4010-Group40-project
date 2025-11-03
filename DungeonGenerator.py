@@ -111,6 +111,8 @@ class DungeonGenerator:
             return False
         if not self._place_mines():
             return False
+        if not self._place_make_orbs_spell():
+            return False
         if not self._place_orb(): # Must be after Medikit, Wall, Dragon, Gazer, Chest, Mimic, Make Orb, Rat King, Mine, and Big Slime
             return False
         if not self._place_minor_monsters():
@@ -533,10 +535,21 @@ class DungeonGenerator:
 
         return True
 
+    def _place_make_orbs_spell(self):
+        """
+        Place the make spell orb. Note that this must be placed before the orb
+
+        :return: Always True (Cannot fail)
+        """
+        spot = self.rem[0]
+        self.board[spot[0]][spot[1]].actor = Actors.SPELL_MAKE_ORB
+        self.board[spot[0]][spot[1]].power = 0
+        self.rem.remove(spot)
+        return True
 
     def _place_minor_monsters(self):
         """
-        Place the remaining monsters: 13 Rats, 12 Bats, 10 Skeletons, 8 Slimes, 1 Mimic, 1 Spell Orb
+        Place the remaining monsters: 13 Rats, 12 Bats, 10 Skeletons, 8 Slimes, 1 Mimic,
 
         :return: True if successful, False otherwise
         """
@@ -545,9 +558,8 @@ class DungeonGenerator:
         NUM_SKELETONS = (10, Actors.SKELETON, 3)
         NUM_SLIMES = (8, Actors.SLIME, 5)
         NUM_MIMICS = (1, Actors.MIMIC, 11)
-        NUM_SPELL_ORBS = (1, Actors.SPELL_MAKE_ORB, 0)
 
-        actors = [NUM_RATS, NUM_BATS, NUM_SKELETONS, NUM_SLIMES, NUM_MIMICS, NUM_SPELL_ORBS]
+        actors = [NUM_RATS, NUM_BATS, NUM_SKELETONS, NUM_SLIMES, NUM_MIMICS]
 
         for (num, actor, power) in actors:
             for _ in range(num):
@@ -612,7 +624,7 @@ class DungeonGenerator:
 
         # Get max value and verify if good placement
         max_value = max(stats)
-        if max_value < 0:
+        if max_value <= 0:
             return False
 
         # Get argmax and update the board
