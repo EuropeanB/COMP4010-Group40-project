@@ -13,7 +13,7 @@ class ActorCritic(nn.Module):
         self.num_actions = num_actions
         self.board_shape = board_shape
         self.player_dim = player_dim
-        rows, cols, channels = self.board_shape
+        channels, rows, cols = self.board_shape
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
@@ -43,8 +43,7 @@ class ActorCritic(nn.Module):
 
 
     def forward(self, board_obs, player_obs):
-        # board_obs: [batch, rows, cols, channels] -> [batch, channels, rows, cols]
-        board_obs = board_obs.permute(0, 3, 1, 2)
+        # board_obs: [batch, channels, rows, cols]
         board_features = self.board_conv(board_obs)
         board_features = board_features.reshape(board_features.size(0), -1)
 
@@ -101,18 +100,18 @@ def PPO(envs, actor_critic, device='cpu'):
     # Hyperparameters
     T = 128 # Number of time steps collected per environment before performing an update
     K = 3 # Number of epochs per PPO update
-    batch_size = 64
+    batch_size = 128 #64
     gamma = 0.99
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
-    vf_coef_c1 = 1 # Weight of the value loss in total PPO loss
-    ent_coef_c2 = 0.01 # Weight of the entropy bonus in PPO loss
-    num_iterations = 20_000
+    vf_coef_c1 = 0.5 #1 # Weight of the value loss in total PPO loss
+    ent_coef_c2 = 0.02 #0.01 # Weight of the entropy bonus in PPO loss
+    num_iterations = 100_000
 
     # Create optimizer and scheduler
-    optimizer = torch.optim.Adam(actor_critic.parameters(), lr=2.5e-4)
+    optimizer = torch.optim.Adam(actor_critic.parameters(), lr=5e-4) #lr originally 2.5e-4
 
     # For tracking progress
-    max_reward = 0
+    max_reward = -10000
     episode_rewards = np.zeros(len(envs))
     total_rewards_list = []
     smoothed_rewards = []
@@ -120,7 +119,7 @@ def PPO(envs, actor_critic, device='cpu'):
     episode_lengths_list = []
 
     # Loading checkpoint if needed
-    '''checkpoint = torch.load("Models/checkpoint_20.pth")
+    '''checkpoint = torch.load("Models/best_agent.pth")
     actor_critic.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])'''
 
@@ -142,7 +141,17 @@ def PPO(envs, actor_critic, device='cpu'):
             # Forward pass
             with torch.no_grad():
                 logits, values = actor_critic(board_batch, player_batch)
-                m = torch.distributions.Categorical(logits=logits)
+
+                # Get the mask for each environment
+                mask_batch = torch.stack([
+                    torch.as_tensor(obs['mask'], dtype=torch.float32) for obs in envs.observations
+                ]).to(device)
+
+                # Set logits of invalid actions to a very large negative number
+                masked_logits = logits + (mask_batch - 1) * 1e9
+
+                # Sample using masked logits
+                m = torch.distributions.Categorical(logits=masked_logits)
                 actions = m.sample()
                 log_probs = m.log_prob(actions)
 
@@ -171,7 +180,7 @@ def PPO(envs, actor_critic, device='cpu'):
 
                     if envs.total_rewards[env_id] > max_reward:
                         max_reward = envs.total_rewards[env_id]
-                        torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Latest/Models/best_agent.pth")
+                        torch.save(actor_critic.state_dict(), f"Models/best_agent.pth")
 
                     # Reset the environment
                     episode_rewards[env_id] = 0
@@ -226,7 +235,6 @@ def PPO(envs, actor_critic, device='cpu'):
                 log_probs = m.log_prob(b_actions)
                 ratio = torch.exp(log_probs - b_logprob_old)
                 policy_loss_1 = b_adv * ratio
-                #clip_range =  0.1 * (1.0 - iteration / num_iterations)
                 clip_range = 0.1
                 policy_loss_2 = b_adv * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
@@ -235,7 +243,7 @@ def PPO(envs, actor_critic, device='cpu'):
                 value_pred_clipped = b_old_values + torch.clamp(values - b_old_values, -clip_range, +clip_range)
                 value_loss_unclipped = (values - b_returns) ** 2
                 value_loss_clipped = (value_pred_clipped - b_returns) ** 2
-                value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
+                value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
                 # Compute total loss
                 loss = policy_loss + ent_coef_c2 * -m.entropy().mean() + vf_coef_c1 * value_loss
@@ -247,15 +255,11 @@ def PPO(envs, actor_critic, device='cpu'):
                 optimizer.step()
 
         # Log reward
-        if iteration % 10 == 0:
+        if iteration % 100 == 0:
             avg_reward = np.mean(total_rewards_list[-len(envs):]) if total_rewards_list else 0
             smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
             avg_length = np.mean(episode_lengths_list[-100:]) if episode_lengths_list else 0
             print(f"\nIteration {iteration} | Avg reward (recent episodes): {avg_reward:.2f} | Smoothed reward: {smooth_reward:.2f} | Avg. episode length: {avg_length:.1f}")
 
-        if iteration % 500 == 0 and iteration != 0:
-            torch.save({
-                'iteration': iteration,
-                'model_state_dict': actor_critic.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict()
-            }, f"/Users/arthurteixeira/Desktop/Pycharm/Latest/Models/checkpoint_{iteration}.pth")
+        if iteration % 1000 == 0 and iteration != 0:
+            torch.save(actor_critic.state_dict(), f"Models/checkpoint_{iteration}.pth")

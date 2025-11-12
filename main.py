@@ -44,12 +44,29 @@ if __name__ == "__main__":
                 board_obs = torch.as_tensor(obs['board'], dtype=torch.float32, device=device).unsqueeze(0)
                 player_obs = torch.as_tensor(obs['player'], dtype=torch.float32, device=device).unsqueeze(0)
 
+                # ---- TEMP TESTING ----
+                '''print(f"New Legal Moves:")
+                mask = obs['mask']
+                for r in range(10):
+                    line = ""
+                    for c in range(13):
+                        line += (str(int(mask[r * 13 + c]))) + " "
+                    print(line)
+                print(mask[-1])
+                input("Hit enter")'''
+                # ---- DONE TEMP TESTING ----
+
                 with torch.no_grad():
                     logits, _ = actor_critic(board_obs, player_obs)
-                    m = torch.distributions.Categorical(logits=logits)
-                    action = m.sample().item()
+                    # --- TEMP TESTING MASKING ---
+                    mask = torch.as_tensor(obs['mask'], dtype=torch.float32).to(device)
+                    masked_logits = logits + (mask - 1) * 1e9
+                    action = torch.argmax(masked_logits, dim=-1).item()
+                    # --- DONE TEMP TESTING MASKING ---
+
+                    #action = torch.argmax(logits, dim=-1).item()
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 print(info)
                 print(f'REWARD: {reward}')
-                input("Hit enter")
+                #input("Hit enter")

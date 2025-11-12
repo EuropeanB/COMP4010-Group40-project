@@ -41,27 +41,40 @@ class DragonSweeperEnv(gym.Env):
         self.SAFE_ACTORS = [Actors.ORB, Actors.SPELL_MAKE_ORB, Actors.SPELL_DISARM, Actors.SPELL_REVEAL_RATS,
                          Actors.SPELL_REVEAL_SLIMES, Actors.DRAGON_EGG, Actors.XP, Actors.GNOME, Actors.CROWN]
 
-        # Board space indices
-        self.BOARD_CHANNELS = 10
+        # Reward function constants
+        self.REWARD_WIN = 1.0 # Reward for winning the game
+        self.REWARD_SAFE_SQUARE = 0.8 # Reward for clicking on a safe square
+        self.REWARD_PERFECT_LEVEL_OR_HEAL = 0.7 # Reward for optimally levelling up or healing
+        self.REWARD_GUARANTEED_SAFE = 0.6 # Reward for clicking a hidden square that is deduced to be safe
+        self.REWARD_CHEST_MIMIC = 0.4 # Reward for clicking a chest or killing a mimic
+        self.REWARD_OPTIMAL_HP_KILL = 0.3 # Reward for killing a revealed enemy equal to our HP value
+        self.REWARD_NON_OPTIMAL_HP_KILL = 0.2 # Reward for killing a revealed enemy not equal to our HP value
+        self.REWARD_GUARANTEED_NO_DEATH = 0.15 # Reward for clicking a hidden square that is deduced to not kill us
+        self.REWARD_GOOD_LEVEL_OR_HEAL = 0.05 # Reward for levelling up or healing slightly non-optimally
+        self.REWARD_BAD_LEVEL_OR_HEAL = -0.1 # Reward for levelling up or healing poorly
+        self.REWARD_RANDOM_GUESS = -0.2 # Reward for simply guessing a square with no information
+        self.REWARD_DEATH = -0.3 # Reward for dying
+        self.REWARD_NONSENSE = -0.5 # Reward for making a move that does nothing
+        self.REWARD_OTHER_ACTIONS = 0.01 # This shouldn't ever happen
 
-        # Cell Status Constants
-        self.CELL_HIDDEN = 0
-        self.CELL_REVEALED = 0.5
-        self.CELL_OBSCURED = 1.0
+        # If a cell's value isn't known, it is set to this value:
+        self.UNKNOWN_VALUE = -1.0
+        self.LEGAL_VALUE = 1.0
+        self.ILLEGAL_VALUE = 0.0
+
+        # Board space indices
+        self.BOARD_CHANNELS = 7
 
         # Standard channels
-        self.STATUS_IDX = 0
-        self.ADJ_POWER_IDX = 1
-        self.CELL_POWER_IDX = 2
-        self.ADJ_BOMBS_IDX = 3
+        self.ADJ_POWER_IDX = 0
+        self.CELL_POWER_IDX = 1
+        self.ADJ_BOMBS_IDX = 2
 
         # One-hot encoded channels
-        self.EMPTY_IDX = 4
-        self.SAFE_IDX = 5
-        self.MEDIKIT_IDX = 6
-        self.CHEST_IDX = 7
-        self.MINE_IDX = 8 # Note, defused mines are SAFE, not MINE
-        self.ENEMY_IDX = 9
+        self.EMPTY_IDX = 3
+        self.MEDIKIT_IDX = 4
+        self.CHEST_IDX = 5
+        self.WALL_IDX = 6
 
         # Player space indices
         self.PLAYER_CHANNELS = 4
@@ -74,17 +87,21 @@ class DragonSweeperEnv(gym.Env):
 
         # Board representation constants
         self.MAX_ADJ_POWER = 40 # This isn't trivially known. This is an estimate
-        self.MAX_CELL_POWER = 13 # Highest damaging enemy is the dragon at 13
+        self.MAX_CELL_POWER = 20 # Highest damaging enemy is the dragon at 13 but we represent mines as 20 (instant kill, max hp)
         self.MAX_ADJ_BOMBS = 8
 
         # Board representation: Each index represents a square on the board
-        # Channels: [Status (hidden 0, revealed 0.5, obscured 1), Adjacent Power, Cell Power, Adjacent Bombs, One-hot encoding]
-        # One-hot encoding: [EMPTY, SAFE, MEDIKIT, CHEST, MINE, ENEMY]
-        # 4 channels + 6 one-hot encoding = 10 total channels
+        # Channels: [Adjacent Power, Cell Power, Adjacent Bombs, One-hot encoding]
+        # One-hot encoding: [EMPTY, MEDIKIT, CHEST, WALL]
+        # 3 channels + 4 one-hot encoding = 7 total channels
+        low_board_vals = np.full((self.BOARD_CHANNELS, self.ROWS, self.COLS), -1.0, dtype=np.float32)
+        low_board_vals[3:, :, :] = 0
+        high_board_vals = np.ones((self.BOARD_CHANNELS, self.ROWS, self.COLS), dtype=np.float32)
+
         board_space = gym.spaces.Box(
-            low = np.zeros((self.ROWS, self.COLS, self.BOARD_CHANNELS), dtype=np.float32),
-            high = np.ones((self.ROWS, self.COLS, self.BOARD_CHANNELS), dtype=np.float32),
-            shape=(self.ROWS, self.COLS, self.BOARD_CHANNELS),
+            low = low_board_vals,
+            high = high_board_vals,
+            shape=(self.BOARD_CHANNELS, self.ROWS, self.COLS),
             dtype=np.float32
         )
 
@@ -98,25 +115,38 @@ class DragonSweeperEnv(gym.Env):
         self.MAX_XP = 30  # This isn't trivially known. This is an estimate
 
         # Player representation: [Current HP, HP Slots, Current XP, XP Required to Level Up]
+        low_player_vals = np.zeros((self.PLAYER_CHANNELS,), dtype=np.float32)
+        high_player_vals = np.ones((self.PLAYER_CHANNELS,),  dtype=np.float32)
         player_space = gym.spaces.Box(
-            low=np.array([0, 0, 0, 0], dtype=np.float32),
-            high=np.array([1, 1, 1, 1], dtype=np.float32),
+            low=low_player_vals,
+            high=high_player_vals,
             shape=(self.PLAYER_CHANNELS,),
             dtype=np.float32
         )
 
-        # Combine Board and Player representations into a single observation space
+        # Used for masking uninformed decisions
+        self.NUM_ACTIONS = self.ROWS * self.COLS + 1
+        mask_space = gym.spaces.Box(
+            low=np.zeros((self.NUM_ACTIONS,), dtype=np.float32),
+            high=np.ones((self.NUM_ACTIONS,), dtype=np.float32),
+            shape=(self.NUM_ACTIONS,),
+            dtype=np.float32
+        )
+
+        # Combine Board and Player and Mask representations into a single observation space
         self.observation_space = gym.spaces.Dict({
             "board": board_space,
-            "player": player_space
+            "player": player_space,
+            "mask": mask_space
         })
 
         # Action space: 0-129 for selected grid cells, 130 for level-up
         self.action_space = gym.spaces.Discrete(self.ROWS * self.COLS + 1)
 
         # Preallocate buffers to avoid creating new arrays every step
-        self._board_buffer = np.zeros((self.ROWS, self.COLS, self.BOARD_CHANNELS), dtype=np.float32)
+        self._board_buffer = np.zeros((self.BOARD_CHANNELS, self.ROWS, self.COLS), dtype=np.float32)
         self._player_buffer = np.zeros((self.PLAYER_CHANNELS,), dtype=np.float32)
+        self._mask_buffer = np.zeros((self.NUM_ACTIONS,), dtype=np.float32)
 
 
     def _get_obs(self):
@@ -124,78 +154,118 @@ class DragonSweeperEnv(gym.Env):
         Translate the environment state into an observation for the agent.
 
         Observation Structure:
-        - Board: 13 x 10 x 10 tensor with channels [Revealed, Adj. Power, Cell Power, Adj. Bombs, 6x one-hot types]
+        - Board: 7 x 10 x 13 tensor with channels [Adj. Power, Adj. Bombs, Cell Power, 4 one-hot types]
         - Player: [Current HP, Max HP, Current XP, XP Capacity]
 
         :return: Dictionary containing 'board' and 'player' observations
         """
 
-        # Translate game to board space
+        # Translate game to board space and mask space
         board_space = self._board_buffer
-        board_space.fill(0)
+        board_space.fill(0.0)
+        mask_space = self._mask_buffer
+        mask_space.fill(1.0) # Start with all being legal
 
         # Loop through every cell and translate it
         for row in range(self.ROWS):
             for col in range(self.COLS):
                 cell = self.game.board[row][col]
 
+                # Adjacent Power, adjacent mines, and cell power are pretty much always unknown
+                board_space[self.ADJ_POWER_IDX, row, col] = self.UNKNOWN_VALUE
+                board_space[self.ADJ_BOMBS_IDX, row, col] = self.UNKNOWN_VALUE
+                board_space[self.CELL_POWER_IDX, row, col] = self.UNKNOWN_VALUE
 
-                # Check if cell is hidden, we have no information on it
+                # If cell is hidden, we have no information on it
                 if not cell.revealed:
-                    board_space[row, col, self.STATUS_IDX] = self.CELL_HIDDEN
                     continue
 
-
-                # If the cell is revealed, get its type and one hot encode it
                 actor = cell.actor
+
+                # If cell is empty, then no power, and we only know info if not obscured.
                 if actor in [Actors.EMPTY, Actors.NONE]:
-                    board_space[row, col, self.EMPTY_IDX] = 1.0
-                elif actor in self.SAFE_ACTORS:
-                    board_space[row, col, self.SAFE_IDX] = 1.0
+                    board_space[self.EMPTY_IDX, row, col] = 1.0
+                    board_space[self.CELL_POWER_IDX, row, col] = 0.0
+                    if not cell.obscured:
+                        adj_bombs = cell.adj_power // 100
+                        adj_power = cell.adj_power % 100
+                        board_space[self.ADJ_POWER_IDX, row, col] = min(1.0, adj_power / self.MAX_HP)
+                        board_space[self.ADJ_BOMBS_IDX, row, col] = adj_bombs / self.MAX_ADJ_BOMBS
+
+                # If cell is chest or mimic, we indicate it as such and set cell power to zero
+                elif actor in [Actors.CHEST or Actors.MIMIC]:
+                    board_space[self.CHEST_IDX, row, col] = 1.0
+                    board_space[self.CELL_POWER_IDX, row, col] = 0.0
+
+                # If cell is medikit, we indicate it as such and set cell power to zero
                 elif actor == Actors.MEDIKIT:
-                    board_space[row, col, self.MEDIKIT_IDX] = 1.0
-                elif actor == Actors.CHEST or actor == Actors.MIMIC:
-                    board_space[row, col, self.CHEST_IDX] = 1.0
-                elif actor == Actors.MINE:
-                    # We treat defused mines as safe actions, and active mines as MINES wih 1.0 cell power
-                    if cell.power == 0:
-                        board_space[row, col, self.SAFE_IDX] = 1.0
-                    else:
-                        board_space[row, col, self.MINE_IDX] = 1.0
-                        board_space[row, col, self.CELL_POWER_IDX] = 1.0
+                    board_space[self.MEDIKIT_IDX, row, col] = 1.0
+                    board_space[self.CELL_POWER_IDX, row, col] = 0.0
+
+                # If cell is a mine, we set cell power to 20 if it is not defused
+                # If it is defused, we simply treat it as a safe cell and let the power be zero
+                elif actor == Actors.MINE and cell.power != 0:
+                    board_space[self.CELL_POWER_IDX, row, col] = 1.0
+
+                # If cell is a wall, we simply indicate that it will deal 1 damage
+                elif actor == Actors.WALL:
+                    board_space[self.WALL_IDX, row, col] = 1.0
+                    board_space[self.CELL_POWER_IDX, row, col] = self.game.board[row][col].power / self.MAX_CELL_POWER
+
+                # In any other case, we simply indicate the power of the cell
                 else:
-                    # Otherwise, it is an enemy and we get its power. We represent bomb power as 14
-                    board_space[row, col, self.ENEMY_IDX] = 1.0
-                    board_space[row, col, self.CELL_POWER_IDX] = np.float32(cell.power / self.MAX_CELL_POWER)
+                    board_space[self.CELL_POWER_IDX, row, col] = min(1.0, cell.power / self.MAX_CELL_POWER)
 
+        # Mask any illegal moves
+        for row in range(self.ROWS):
+            for col in range(self.COLS):
+                cell = self.game.board[row][col]
 
-                # If cell is empty but obscured, we get no information
-                # If cell is empty and not obscured, we get all surrounding information
-                if board_space[row, col, self.EMPTY_IDX]:
-                    if cell.obscured:
-                        board_space[row, col, self.STATUS_IDX] = self.CELL_OBSCURED
-                        continue
+                # If revealed, it is legal only if it is not empty
+                if cell.revealed:
+                    if cell.actor in [Actors.EMPTY, Actors.NONE]:
+                        mask_space[row * self.COLS + col] = 0.0
+                    continue
 
-                    adj_bombs = cell.adj_power // 100
-                    adj_power = cell.adj_power % 100
+                # Check if at least 1 surrounding cell provides information on it
+                adjacent_information = False
+                for row_sum in [-1, 0, 1]:
+                    if adjacent_information:
+                        break
 
-                    board_space[row, col, self.ADJ_BOMBS_IDX] = np.float32(adj_bombs / self.MAX_ADJ_BOMBS)
-                    board_space[row, col, self.ADJ_POWER_IDX] = np.float32(min(1.0, adj_power / self.MAX_ADJ_POWER)) # Clip since MAX_ADJ_POWER is estimate
+                    for col_sum in [-1, 0, 1]:
+                        # Skip if it's the selected cell
+                        if row_sum == col_sum == 0:
+                            continue
 
+                        # Get new row and col
+                        new_row = row + row_sum
+                        new_col = col + col_sum
 
-                # Cell is not hidden, and not obscured. So, must be revealed
-                board_space[row, col, self.STATUS_IDX] = self.CELL_REVEALED
+                        # Skip if out of bounds
+                        if new_row < 0 or new_row >= self.ROWS or new_col < 0 or new_col >= self.COLS:
+                            continue
 
+                        if board_space[self.ADJ_POWER_IDX, new_row, new_col] >= 0.0 or board_space[self.ADJ_BOMBS_IDX, new_row, new_col] >= 0.0:
+                            adjacent_information = True
+                            break
+
+                # If no adjacent information then mask it
+                if not adjacent_information:
+                    mask_space[row * self.COLS + col] = 0.0
+
+        # Mask level up if not enough XP
+        mask_space[-1] = 1.0 if self.game.xp >= self.game.get_required_level_xp() else 0.0
 
         # Translate game to player space
         player_space = self._player_buffer
         player_space[self.CURRENT_HP_IDX] = self.game.curr_health / self.MAX_HP
         player_space[self.MAX_HP_IDX] = self.game.max_health / self.MAX_HP
-        player_space[self.CURRENT_XP_IDX] = min(1.0, self.game.xp / self.MAX_XP) # Clip since MAX_XP is estimate, but should never really be that high anyway
-        player_space[self.XP_REQUIRED_IDX] = self.game.get_required_level_xp() / self.MAX_XP_REQUIRED
+        player_space[self.CURRENT_XP_IDX] = min(1.0, self.game.xp / self.MAX_XP_REQUIRED)
+        player_space[self.XP_REQUIRED_IDX] = min(1.0, self.game.get_required_level_xp() / self.MAX_XP_REQUIRED)
 
         # Return Observation
-        return {"board": board_space, "player": player_space}
+        return {"board": board_space, "player": player_space, "mask": mask_space}
 
 
     def _get_info(self):
@@ -219,27 +289,6 @@ class DragonSweeperEnv(gym.Env):
         }
 
 
-    def get_legal_moves_mask(self, state):
-        """
-        Given an observation state, the environment will generate a legal
-        move mask to apply to the generated q-values.
-
-        :param state:
-        :return:
-        """
-        legal_mask = np.zeros(131, dtype=bool)
-
-        # Level-up action
-        legal_mask[self.LEVEL_UP_INDEX] = (state['player'][self.CURRENT_XP_IDX] >= state['player'][self.XP_REQUIRED_IDX])
-
-        # Board actions - Illegal if revealed AND empty
-        revealed = (state['board'][:, :, self.STATUS_IDX] == self.CELL_REVEALED) | (state['board'][:, :, self.STATUS_IDX] == self.CELL_OBSCURED)
-        empty = state['board'][:, :, self.EMPTY_IDX] > 0.5
-        legal_mask[:self.LEVEL_UP_INDEX] = (~(revealed & empty)).flatten()
-
-        return legal_mask
-
-
     def reset(self, seed=None, options=None):
         """
         Reset the environment to start a new episode.
@@ -252,6 +301,10 @@ class DragonSweeperEnv(gym.Env):
 
         # Reset game
         self.game.reset_game(seed=seed)
+
+        # Render if required
+        if self.render_mode == "human" and self.game_visual:
+            self.render()
 
         return self._get_obs(), self._get_info()
 
@@ -266,54 +319,57 @@ class DragonSweeperEnv(gym.Env):
 
 
     def _calculate_reward(self, old_board, action, win, alive, success, prev_hp):
+
         """
         Computes reward based on game state and action
 
         :return: The reward calculated
         """
-        # If the agent ever tries something that does NOTHING, give large negative reward
+        # Penalize nonsense moves heavily, this should never happen
         if not success:
-            return -1.0 # Nonsense moves are masked. This should NEVER occur
+            return self.REWARD_NONSENSE
 
         # If the agent dies, give large negative reward (but less than nonsense)
         if not alive:
-            return -0.9
+            return self.REWARD_DEATH
 
-        if win: # Reward winning heavily (though this will likely enver occur)
-            return 1.0
+        if win:  # Reward winning heavily (though this will likely enver occur)
+            return self.REWARD_WIN
 
         # We need row and col for the following checks
         row, col = self._action_pos(action)
 
         # Reward based on how effective the level up was
-        if action == self.LEVEL_UP_INDEX or old_board[row, col, self.MEDIKIT_IDX]:
+        if action == self.LEVEL_UP_INDEX or old_board[self.MEDIKIT_IDX, row, col]:
+            bonus = 0.1 if action == self.LEVEL_UP_INDEX else 0  # Prioritize levelling over healing
             if prev_hp == 1:
-                return 1.0 # Perfect level up
+                return self.REWARD_PERFECT_LEVEL_OR_HEAL + bonus  # Perfect level up
             elif prev_hp == 2:
-                return 0.1 # Slightly off
+                return self.REWARD_PERFECT_LEVEL_OR_HEAL + bonus  # Slightly off
             else:
-                return -0.4 # Inefficient
+                return self.REWARD_BAD_LEVEL_OR_HEAL  # Inefficient
+
+        # Reward clicking CHEST (or MIMIC and not dying)
+        if old_board[self.CHEST_IDX, row, col]:
+            return self.REWARD_CHEST_MIMIC
 
         # Clicking anything SAFE should be heavily rewarded (agent should always take this action is available)
-        if old_board[row, col, self.SAFE_IDX]:
-            return 1.0
+        if not old_board[self.EMPTY_IDX, row, col] and old_board[self.CELL_POWER_IDX, row, col] == 0:
+            return self.REWARD_SAFE_SQUARE
 
-        # The agent can't differentiate between chest and mimics. However, if the mimic killed the agent, that
-        # case would already be covered under 'if not alive'. So, either the agent touched the real chest (which
-        # is very good), or the agent touched the mimic and survived (which is also very good)
-        if old_board[row, col, self.CHEST_IDX]:
-            return 0.6
 
-        # If the agent clicked on a revealed cell that did something and didn't kill us, typically we want to
-        # reward that
-        if old_board[row, col, self.STATUS_IDX] == self.CELL_REVEALED:
-            return 0.3
+        # If the agent clicked a revealed cell that must have dealt damage
+        if old_board[self.CELL_POWER_IDX, row, col] > self.UNKNOWN_VALUE:
+            # Return a reward if health usage is maximized
+            if self.game.curr_health == 1:
+                return self.REWARD_OPTIMAL_HP_KILL
+            # Otherwise, return a standard reward
+            return self.REWARD_NON_OPTIMAL_HP_KILL
 
         # Here's the hard part. We want to reward SMART selection of unknown squares.
         # 1) if any of the  surrounding squares have a zero, we know it was safe to click, so all good.
         # 2) Check if the number surrounding it is lower than our current health, if it was good, otherwise risky
         # 3) If there's NO information around it, that is very bad (agent just guessed randomly)
-
         adj_revealed = False
 
         for row_sum in [-1, 0, 1]:
@@ -331,10 +387,10 @@ class DragonSweeperEnv(gym.Env):
                     continue
 
                 # Get cell information
-                revealed = old_board[new_row, new_col, self.STATUS_IDX] == self.CELL_REVEALED
-                empty = old_board[new_row, new_col, self.EMPTY_IDX]
-                adj_power = old_board[new_row, new_col, self.ADJ_POWER_IDX]
-                adj_mines = old_board[new_row, new_col, self.ADJ_BOMBS_IDX]
+                revealed = old_board[self.ADJ_POWER_IDX, new_row, new_col] > self.UNKNOWN_VALUE
+                empty = old_board[self.EMPTY_IDX, new_row, new_col]
+                adj_power = old_board[self.ADJ_POWER_IDX, new_row, new_col]
+                adj_mines = old_board[self.ADJ_BOMBS_IDX, new_row, new_col]
 
                 # If the cell isn't revealed and empty, then there's no information on it
                 if not (revealed and empty):
@@ -343,19 +399,20 @@ class DragonSweeperEnv(gym.Env):
                 adj_revealed = True
 
                 # Return good reward if cell indicates that the cell clicked was safe to click (point 1)
-                if adj_power == 0 and adj_mines == 0: # Proves 1)
-                    return 0.8
+                if adj_power == 0 and adj_mines == 0:  # Proves 1)
+                    return self.REWARD_GUARANTEED_SAFE
 
                 # Return decent reward if cell indicates that the cell clicked wouldn't kill us (point 2)
-                if adj_power < prev_hp and adj_mines == 0: # Prove 2)
-                    return 0.3
+                if adj_power < prev_hp and adj_mines == 0:  # Prove 2)
+                    return self.REWARD_GUARANTEED_NO_DEATH
 
         # Penalize if the agent just made a random guess with no information (point 3)
         if not adj_revealed:
-            return -0.7
+            return self.REWARD_RANDOM_GUESS
 
-        # Reward slightly if they had at least SOME information
-        return 0.0
+
+        # If the agent explores and doesn't die.
+        return self.REWARD_OTHER_ACTIONS
 
 
     def step(self, action):
@@ -385,7 +442,7 @@ class DragonSweeperEnv(gym.Env):
         # Calculate reward
         reward = self._calculate_reward(old_board, action, win, alive, success, prev_hp)
 
-        # Get observation (IMPORTANT THAT THIS IS AFTER REWARD
+        # Get observation (IMPORTANT THAT THIS IS AFTER REWARD)
         observation = self._get_obs()
 
         # Get Truncated
