@@ -6,10 +6,11 @@ import gymnasium as gym
 import torch
 
 if __name__ == "__main__":
-    train = False # True for training, false for testing
+    train = True # True for training, false for testing
 
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    device = "cuda"
     print(f"Using device: {device}")
 
     if train:

@@ -231,6 +231,9 @@ class DragonSweeperEnv(gym.Env):
 
         # Level-up action
         legal_mask[self.LEVEL_UP_INDEX] = (state['player'][self.CURRENT_XP_IDX] >= state['player'][self.XP_REQUIRED_IDX])
+        # Print a message if level-up is legal
+        # if legal_mask[self.LEVEL_UP_INDEX]:
+        #     print("Level-up action is legal.")
 
         # Board actions - Illegal if revealed AND empty
         revealed = (state['board'][:, :, self.STATUS_IDX] == self.CELL_REVEALED) | (state['board'][:, :, self.STATUS_IDX] == self.CELL_OBSCURED)
@@ -265,97 +268,121 @@ class DragonSweeperEnv(gym.Env):
         return ROW, COL
 
 
-    def _calculate_reward(self, old_board, action, win, alive, success, prev_hp):
-        """
-        Computes reward based on game state and action
+    def _calculate_reward(self, old_board, action, win, alive, success, prev_hp,
+                        revealed_new_tiles_count=0,
+                        killed_monster=False,
+                        picked_loot=False,
+                        leveled_up=False):
 
-        :return: The reward calculated
-        """
-        # If the agent ever tries something that does NOTHING, give large negative reward
+
+        # ---------------------------------------------------------------------
+        # === SHAPING CONSTANTS (tune these) ===
+        SURVIVAL_BONUS = 0.50       #originally 0.02
+        REVEAL_BONUS = 0.35         #originally 0.12
+        KILL_BONUS = 0.35           #originally 0.35
+        LOOT_BONUS = 0.80           #originally 0.25
+        LEVEL_BONUS = 0.90          #originally 0.60
+        DEATH_PENALTY = -5.00       #originally -2.0
+        # ---------------------------------------------------------------------
+
+        # If nonsense move: heavy penalty (should never happen)
         if not success:
-            return -1.0 # Nonsense moves are masked. This should NEVER occur
+            return -1.0 # originally -1.0
 
-        # If the agent dies, give large negative reward (but less than nonsense)
+        # Agent died
         if not alive:
-            return -0.9
+            return DEATH_PENALTY
 
-        if win: # Reward winning heavily (though this will likely enver occur)
-            return 1.0
+        # Winning the game
+        if win:
+            print("AGENT WON")
+            return 1.0 + LEVEL_BONUS  # small boost
 
-        # We need row and col for the following checks
+        # Compute original event reward (base_reward)
         row, col = self._action_pos(action)
 
-        # Reward based on how effective the level up was
+        # ========= YOUR ORIGINAL LOGIC — PRESERVED, VALUES CHANGED WHERE NEEDED ========= #
+
+        # LEVEL UP or MEDIKIT tile
         if action == self.LEVEL_UP_INDEX or old_board[row, col, self.MEDIKIT_IDX]:
             if prev_hp == 1:
-                return 1.0 # Perfect level up
+                base_reward = 1.0      # originally 1.0
             elif prev_hp == 2:
-                return 0.1 # Slightly off
+                base_reward = 0.1      # originally 0.1
             else:
-                return -0.4 # Inefficient
+                base_reward = -0.4     # originally -0.4
+        # SAFE tile
+        elif old_board[row, col, self.SAFE_IDX]:
+            base_reward = 1.0          # originally 1.0
+        # CHEST tile (good or mimic survived)
+        elif old_board[row, col, self.CHEST_IDX]:
+            base_reward = 0.6          # originally 0.6
+        # Clicking a revealed tile
+        elif old_board[row, col, self.STATUS_IDX] == self.CELL_REVEALED:
+            base_reward = 0.3          # originally 0.3
+        else:
+            # GUESSING LOGIC
+            adj_revealed = False
+            for row_sum in (-1, 0, 1):
+                for col_sum in (-1, 0, 1):
+                    if row_sum == col_sum == 0:
+                        continue
+                    new_row = row + row_sum
+                    new_col = col + col_sum
+                    if not(0 <= new_row < self.ROWS and 0 <= new_col < self.COLS):
+                        continue
 
-        # Clicking anything SAFE should be heavily rewarded (agent should always take this action is available)
-        if old_board[row, col, self.SAFE_IDX]:
-            return 1.0
+                    revealed = old_board[new_row, new_col, self.STATUS_IDX] == self.CELL_REVEALED
+                    empty    = old_board[new_row, new_col, self.EMPTY_IDX]
+                    adj_power = old_board[new_row, new_col, self.ADJ_POWER_IDX]
+                    adj_mines = old_board[new_row, new_col, self.ADJ_BOMBS_IDX]
 
-        # The agent can't differentiate between chest and mimics. However, if the mimic killed the agent, that
-        # case would already be covered under 'if not alive'. So, either the agent touched the real chest (which
-        # is very good), or the agent touched the mimic and survived (which is also very good)
-        if old_board[row, col, self.CHEST_IDX]:
-            return 0.6
+                    if not (revealed and empty):
+                        continue
 
-        # If the agent clicked on a revealed cell that did something and didn't kill us, typically we want to
-        # reward that
-        if old_board[row, col, self.STATUS_IDX] == self.CELL_REVEALED:
-            return 0.3
+                    adj_revealed = True
 
-        # Here's the hard part. We want to reward SMART selection of unknown squares.
-        # 1) if any of the  surrounding squares have a zero, we know it was safe to click, so all good.
-        # 2) Check if the number surrounding it is lower than our current health, if it was good, otherwise risky
-        # 3) If there's NO information around it, that is very bad (agent just guessed randomly)
+                    # Safe to click (0-power)
+                    if adj_power == 0 and adj_mines == 0:
+                        base_reward = 1.0   # originally 0.8
+                        break
 
-        adj_revealed = False
+                    # Safe-ish based on HP
+                    if adj_power < prev_hp and adj_mines == 0:
+                        base_reward = 0.3  # originally 0.3
+                        break
 
-        for row_sum in [-1, 0, 1]:
-            for col_sum in [-1, 0, 1]:
-                # Skip if it's the selected cell
-                if row_sum == col_sum == 0:
-                    continue
+            else:
+                # No break occurred => adj_revealed is still False
+                if not adj_revealed:
+                    base_reward = -0.1     # originally -0.7
+                else:
+                    base_reward = 0.0      # unchanged
 
-                # Get new row and col
-                new_row = row + row_sum
-                new_col = col + col_sum
+        # ========================================================================= #
+        # ------------------------- APPLY SHAPING REWARDS ------------------------- #
+        shaped = base_reward
 
-                # Skip if out of bounds
-                if new_row < 0 or new_row >= self.ROWS or new_col < 0 or new_col >= self.COLS:
-                    continue
+        # 1) Survival bonus (non-death step)
+        shaped += SURVIVAL_BONUS
 
-                # Get cell information
-                revealed = old_board[new_row, new_col, self.STATUS_IDX] == self.CELL_REVEALED
-                empty = old_board[new_row, new_col, self.EMPTY_IDX]
-                adj_power = old_board[new_row, new_col, self.ADJ_POWER_IDX]
-                adj_mines = old_board[new_row, new_col, self.ADJ_BOMBS_IDX]
+        # 2) Reveal tiles bonus
+        if revealed_new_tiles_count > 0:
+            shaped += REVEAL_BONUS * revealed_new_tiles_count
 
-                # If the cell isn't revealed and empty, then there's no information on it
-                if not (revealed and empty):
-                    continue
+        # 3) Combat rewards
+        if killed_monster:
+            shaped += KILL_BONUS
 
-                adj_revealed = True
+        # 4) Loot reward
+        if picked_loot:
+            shaped += LOOT_BONUS
 
-                # Return good reward if cell indicates that the cell clicked was safe to click (point 1)
-                if adj_power == 0 and adj_mines == 0: # Proves 1)
-                    return 0.8
+        # 5) Level up reward
+        if leveled_up:
+            shaped += LEVEL_BONUS
 
-                # Return decent reward if cell indicates that the cell clicked wouldn't kill us (point 2)
-                if adj_power < prev_hp and adj_mines == 0: # Prove 2)
-                    return 0.3
-
-        # Penalize if the agent just made a random guess with no information (point 3)
-        if not adj_revealed:
-            return -0.7
-
-        # Reward slightly if they had at least SOME information
-        return 0.0
+        return float(shaped)
 
 
     def step(self, action):
