@@ -5,6 +5,7 @@ import gymnasium as gym
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 import torch.nn.functional as F
+from collections import deque
 
 class ActorCritic(nn.Module):
     def __init__(self, board_shape, player_dim, num_actions):
@@ -17,22 +18,22 @@ class ActorCritic(nn.Module):
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU()
+            nn.Conv2d(channels, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 1, kernel_size=3, padding=1), nn.ReLU()
         )
 
         # Calculate CNN output size
-        self.conv_out_size = 64 * rows * cols
+        self.conv_out_size = 1 * rows * cols
 
+        # MLP Trunk
         self.fc = nn.Sequential(
-            nn.Linear(self.conv_out_size + player_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU()
+            nn.Linear(self.conv_out_size + player_dim, 512), nn.ReLU(),
+            nn.Linear(512, 256), nn.ReLU()
         )
 
         # Actor head (policy logits)
@@ -64,6 +65,7 @@ class Environments:
         self.total_rewards = [0 for _ in range(num_actors)]
         self.episode_steps  = [0 for _ in range(num_actors)]
         self.num_actors = num_actors
+        self.first_actor_clicked = [None for _ in range(num_actors)]
 
         for env_id in range(num_actors):
             self.reset_env(env_id)
@@ -74,9 +76,10 @@ class Environments:
     def reset_env(self, env_id):
         self.total_rewards[env_id] = 0
         self.episode_steps[env_id] = 0
-        obs, info = self.envs[env_id].reset()
+        obs, info = self.envs[env_id].reset(seed=np.random.randint(1e9))
         self.observations[env_id] = obs
         self.done[env_id] = False
+        self.first_actor_clicked[env_id] = None
         return obs, info
 
     def step(self, env_id, action):
@@ -86,6 +89,9 @@ class Environments:
         self.episode_steps[env_id] += 1
         self.observations[env_id] = observation
 
+        if self.episode_steps[env_id] == 1:
+            self.first_actor_clicked[env_id] = info['last touched']
+
         return observation, reward, terminated, truncated, info
 
     def get_env(self):
@@ -94,7 +100,8 @@ class Environments:
 
 
 def PPO(envs, actor_critic, device='cpu'):
-    rows, cols, channels = actor_critic.board_shape
+    channels, rows, cols = actor_critic.board_shape
+    num_actions = rows * cols + 1
     player_dim = actor_critic.player_dim
 
     # Hyperparameters
@@ -104,7 +111,7 @@ def PPO(envs, actor_critic, device='cpu'):
     gamma = 0.99
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
     vf_coef_c1 = 0.5 #1 # Weight of the value loss in total PPO loss
-    ent_coef_c2 = 0.02 #0.01 # Weight of the entropy bonus in PPO loss
+    ent_coef_c2 = 0.02 # Weight of the entropy bonus in PPO loss
     num_iterations = 100_000
 
     # Create optimizer and scheduler
@@ -113,10 +120,17 @@ def PPO(envs, actor_critic, device='cpu'):
     # For tracking progress
     max_reward = -10000
     episode_rewards = np.zeros(len(envs))
-    total_rewards_list = []
-    smoothed_rewards = []
+
+    # ---- METRIC TRACKING ----
+    smoothed_rewards = deque(maxlen=200)
     smoothing_factor = 0.9
-    episode_lengths_list = []
+    episode_rewards_list = deque(maxlen=200)
+    episode_lengths_list = deque(maxlen=200)
+    step_rewards_list = deque(maxlen=500)
+    first_move_orb_list = deque(maxlen=200)
+    illegal_actions_count = 0
+    entropy_values = deque(maxlen=200)
+    # -------------------------
 
     # Loading checkpoint if needed
     '''checkpoint = torch.load("Models/best_agent.pth")
@@ -124,9 +138,9 @@ def PPO(envs, actor_critic, device='cpu'):
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])'''
 
     for iteration in tqdm(range(num_iterations)):
-        advantages = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
-        buffer_board = torch.zeros((len(envs), T, rows, cols, channels), dtype=torch.float32, device=device)
+        buffer_board = torch.zeros((len(envs), T, channels, rows, cols), dtype=torch.float32, device=device)
         buffer_player = torch.zeros((len(envs), T, player_dim), dtype=torch.float32, device=device)
+        buffer_masks = torch.zeros((len(envs), T, num_actions), dtype=torch.bool, device=device)
         buffer_actions = torch.zeros((len(envs), T), dtype=torch.long, device=device)
         buffer_logprobs = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
         buffer_values = torch.zeros((len(envs), T+1), dtype=torch.float32, device=device)
@@ -144,40 +158,51 @@ def PPO(envs, actor_critic, device='cpu'):
 
                 # Get the mask for each environment
                 mask_batch = torch.stack([
-                    torch.as_tensor(obs['mask'], dtype=torch.float32) for obs in envs.observations
+                    torch.as_tensor(obs['mask'], dtype=torch.bool) for obs in envs.observations
                 ]).to(device)
 
                 # Set logits of invalid actions to a very large negative number
-                masked_logits = logits + (mask_batch - 1) * 1e9
+                masked_logits = logits.clone()
+                masked_logits = masked_logits.masked_fill(~mask_batch, -1e9)
 
                 # Sample using masked logits
                 m = torch.distributions.Categorical(logits=masked_logits)
                 actions = m.sample()
                 log_probs = m.log_prob(actions)
 
+                if t == 0:
+                    print("First actions: ", actions.tolist())
+
             # Step environments
-            next_obs, rewards, terms, truncs, infos = [], [], [], [], []
+            rewards, dones = [], []
             for env_id, action in enumerate(actions):
-                obs, reward, terminated, truncated, info = envs.step(env_id, action.item()) # why action.item() and not just "action"?
+                obs, reward, terminated, truncated, info = envs.step(env_id, action.item())
+
+                # Log if illegal action was taken (mainly for testing)
+                if not mask_batch[env_id, action.item()]:
+                    illegal_actions_count += 1
+
+                # Update logging rewards
                 episode_rewards[env_id] += reward
+                step_rewards_list.append(reward)
 
                 # Append results
-                next_obs.append(obs)
                 rewards.append(reward)
-                terms.append(terminated)
-                truncs.append(truncated)
-                infos.append(info)
+                dones.append(terminated or truncated)
 
                 # Track rewards and best performing models
                 if terminated or truncated:
-                    total_rewards_list.append(envs.total_rewards[env_id])
+                    episode_rewards_list.append(envs.total_rewards[env_id])
                     episode_lengths_list.append(envs.episode_steps[env_id])
 
-                    if smoothed_rewards:
+                    if len(smoothed_rewards) > 0:
                         smoothed_rewards.append(smoothing_factor * smoothed_rewards[-1] + (1 - smoothing_factor) * envs.total_rewards[env_id])
                     else:
                         smoothed_rewards.append(envs.total_rewards[env_id])
 
+                    first_move_orb_list.append(1 if envs.first_actor_clicked[env_id] == "ORB" else 0)
+
+                    # Save best agent
                     if envs.total_rewards[env_id] > max_reward:
                         max_reward = envs.total_rewards[env_id]
                         torch.save(actor_critic.state_dict(), f"Models/best_agent.pth")
@@ -193,18 +218,18 @@ def PPO(envs, actor_critic, device='cpu'):
             buffer_logprobs[:, t] = log_probs
             buffer_values[:, t] = values.squeeze(-1)
             buffer_rewards[:, t] = torch.tensor(rewards, device=device, dtype=torch.float32)
-            buffer_dones[:, t] = torch.tensor([t_ or f_ for t_, f_ in zip(terms, truncs)], device=device, dtype=torch.float32)
-
-        # Compute value for the last step
-        board_batch = torch.stack([torch.as_tensor(obs['board'], dtype=torch.float32) for obs in envs.observations]).to(device)
-        player_batch = torch.stack([torch.as_tensor(obs['player'], dtype=torch.float32) for obs in envs.observations]).to(device)
+            buffer_dones[:, t] = torch.tensor(dones, device=device, dtype=torch.float32)
+            buffer_masks[:, t] = mask_batch
 
         # Forward pass
         with torch.no_grad():
+            board_batch = torch.stack([torch.as_tensor(obs['board'], dtype=torch.float32) for obs in envs.observations]).to(device)
+            player_batch = torch.stack([torch.as_tensor(obs['player'], dtype=torch.float32) for obs in envs.observations]).to(device)
             _, last_values = actor_critic(board_batch, player_batch)
         buffer_values[:, T] = last_values.squeeze(-1)
 
         # Compute GAE advantages
+        advantages = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
         for t in reversed(range(T)):
             next_non_terminal = 1.0 - buffer_dones[:, t]
             delta = buffer_rewards[:, t] + gamma * buffer_values[:, t+1] * next_non_terminal - buffer_values[:, t]
@@ -214,28 +239,33 @@ def PPO(envs, actor_critic, device='cpu'):
                 advantages[:, t] = delta + gamma * gae_parameter * advantages[:, t+1] * next_non_terminal
 
         # Flatten for training
-        flat_board = buffer_board.reshape(-1, rows, cols, channels)
+        flat_board = buffer_board.reshape(-1, channels, rows, cols)
         flat_player = buffer_player.reshape(-1, player_dim)
         flat_actions = buffer_actions.reshape(-1)
         flat_old_logprobs = buffer_logprobs.reshape(-1)
         flat_advantages = advantages.reshape(-1)
-        flat_advantages = (flat_advantages - flat_advantages.mean()) / (flat_advantages.std() + 1e-8) # Added for testing
+        flat_advantages = (flat_advantages - flat_advantages.mean()) / (flat_advantages.std() + 1e-8)
         flat_returns = (advantages + buffer_values[:, :T]).reshape(-1)
-        flat_old_values = buffer_values[:, :T].reshape(-1)
+        flat_old_values = buffer_values[:, :T].reshape(-1).detach()
+        flat_masks = buffer_masks.reshape(-1, actor_critic.num_actions)
 
         # Create dataset and loader for PPO update
-        dataset = TensorDataset(flat_advantages, flat_board, flat_player, flat_actions, flat_old_logprobs, flat_returns, flat_old_values)
+        dataset = TensorDataset(flat_advantages, flat_board, flat_player, flat_actions, flat_old_logprobs, flat_returns, flat_old_values, flat_masks)
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         # PPO update
         for _ in range(K):
-            for b_adv, b_board, b_player, b_actions, b_logprob_old, b_returns, b_old_values in loader:
+            for b_adv, b_board, b_player, b_actions, b_logprob_old, b_returns, b_old_values, b_masks in loader:
                 logits, values = actor_critic(b_board, b_player)
-                m = torch.distributions.Categorical(logits=logits)
+                masked_logits = logits + (~b_masks) * (-1e9)
+                m = torch.distributions.Categorical(logits=masked_logits)
                 log_probs = m.log_prob(b_actions)
+                entropy = m.entropy()
+                entropy_values.append(entropy.mean().item())
+
                 ratio = torch.exp(log_probs - b_logprob_old)
                 policy_loss_1 = b_adv * ratio
-                clip_range = 0.1
+                clip_range = 0.2
                 policy_loss_2 = b_adv * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
                 policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
 
@@ -246,7 +276,7 @@ def PPO(envs, actor_critic, device='cpu'):
                 value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
                 # Compute total loss
-                loss = policy_loss + ent_coef_c2 * -m.entropy().mean() + vf_coef_c1 * value_loss
+                loss = policy_loss + ent_coef_c2 * -entropy.mean() + vf_coef_c1 * value_loss
 
                 # Clip the gradient and optimize
                 optimizer.zero_grad()
@@ -255,11 +285,27 @@ def PPO(envs, actor_critic, device='cpu'):
                 optimizer.step()
 
         # Log reward
-        if iteration % 100 == 0:
-            avg_reward = np.mean(total_rewards_list[-len(envs):]) if total_rewards_list else 0
-            smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
-            avg_length = np.mean(episode_lengths_list[-100:]) if episode_lengths_list else 0
-            print(f"\nIteration {iteration} | Avg reward (recent episodes): {avg_reward:.2f} | Smoothed reward: {smooth_reward:.2f} | Avg. episode length: {avg_length:.1f}")
+        if iteration % 10 == 0 and iteration != 0:
+            ep_window = 200
+            step_window = 500
 
-        if iteration % 1000 == 0 and iteration != 0:
+            avg_ep_reward = np.mean(list(episode_rewards_list)[-ep_window:]) if episode_rewards_list else 0
+            avg_ep_length = np.mean(list(episode_lengths_list)[-ep_window:]) if episode_lengths_list else 0
+            avg_step_reward = np.mean(list(step_rewards_list)[-step_window:]) if step_rewards_list else 0
+            avg_entropy = np.mean(list(entropy_values)[-ep_window:]) if entropy_values else 0
+            orb_rate = (sum(first_move_orb_list) / len(first_move_orb_list)) if len(first_move_orb_list) > 0 else 0
+            smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
+
+            print(
+                f"\nIteration {iteration}"
+                f" | Avg episode reward: {avg_ep_reward:.3f}"
+                f" | Avg step reward: {avg_step_reward:.3f}"
+                f" | Avg ep length: {avg_ep_length:.1f}"
+                f" | Smoothed reward: {smooth_reward:.3f}"
+                f" | Entropy: {avg_entropy:.3f}"
+                f" | ORB first-move rate: {orb_rate * 100:.1f}%"
+                f" | Illegal actions: {illegal_actions_count}"
+            )
+
+        if iteration % 10 == 0 and iteration != 0:
             torch.save(actor_critic.state_dict(), f"Models/checkpoint_{iteration}.pth")

@@ -10,35 +10,25 @@ class DQN(nn.Module):
     def __init__(self, board_shape, player_dim, num_actions):
         super(DQN, self).__init__()
 
-        rows, cols, channels = board_shape
+        self.channels, self.rows, self.cols = board_shape
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU()
+            nn.Conv2d(self.channels, 16, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU()
         )
 
         # Calculate CNN output size
-        self.conv_out_size = 64 * rows * cols
+        self.conv_out_size = 32 * self.rows * self.cols
 
         # Fully connected layers for board output + player processing
         self.fc = nn.Sequential(
-            nn.Linear(self.conv_out_size + player_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.Linear(self.conv_out_size + player_dim, 256), nn.ReLU(),
             nn.Linear(256, num_actions)
         )
 
-
-    def forward(self, board_obs, player_obs):
-        # board_obs: [batch, rows, cols, channels] -> [batch, channels, rows, cols]
-        board_obs = board_obs.contiguous().permute(0, 3, 1, 2)
-
+    def _raw_forward(self, board_obs, player_obs):
+        # board_obs: [batch, channels, rows, cols]
         # Process the board with CNN
         board_features = self.board_conv(board_obs)
         board_features = board_features.reshape(board_features.size(0), -1)
@@ -49,6 +39,30 @@ class DQN(nn.Module):
         # Process with the fully connected layer
         return self.fc(combined)
 
+    @staticmethod
+    def _bias_forward(board_obs, player_obs):
+        SAFE_IDX = 5 # Should align with environment
+        SAFE_BIAS = 5.0
+        ONE_HP = (1 / 20) # Should align with environment
+        HP_BIAS = 5.0
+
+        B = board_obs.size(0)
+
+        # Board bias
+        safe_mask = board_obs[:, SAFE_IDX, :, :].reshape(B, -1)
+        board_bias = safe_mask * SAFE_BIAS
+
+        # Create output tensor
+        player_bias = torch.zeros((B, 1), device=board_obs.device)
+        q_bias = torch.cat([board_bias, player_bias], dim=1)
+
+        return q_bias
+
+    def forward(self, board_obs, player_obs):
+        raw_vals = self._raw_forward(board_obs, player_obs)
+        bias_vals = self._bias_forward(board_obs, player_obs)
+        return raw_vals + bias_vals
+
 
 class DQNAgent:
     def __init__(self, board_dim, player_dim, action_dim):
@@ -57,28 +71,26 @@ class DQNAgent:
         self.player_dim = player_dim
         self.action_dim = action_dim
         self.total_steps = 0
-        self.latest_experience = None
-
         # Initialize agent memory
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=100_000)
 
         # --- AGENT HYPERPARAMETERS ---
-        self.discount = 0.99
+        self.discount = 0 #0.93
         self.batch_size = 64
-        self.learning_rate = 0.001
+        self.learning_rate = 0.0001
 
         self.explore_rate = 1.0 # Start at 100%
-        self.min_explore_rate = 0.1 # Keep at 10% exploration
-        self.explore_decay_steps = 100_000 # Reach minimum exploration in 20k steps
-        self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
+        self.min_explore_rate = 0.15 # Keep at 10% exploration
+        self.explore_decay_steps = 200_000  # Reach minimum exploration in 20k steps
+        # self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
 
-        self.learning_starts = 1000 # Start learning after 1k steps
-        self.target_update_freq = 1000  # Update target model every 1k steps
-        self.train_frequency = 1 # Train on memories every 8 steps
+        self.learning_starts = 5000 # Start learning after 1k steps
+        self.target_update_freq = 2000  # Update target model every 1k steps
+        self.train_frequency = 4 # Train on memories every 4 steps
 
-        #
+        # Select device
         self.device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-        #self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
 
         # Create and compile our models
         self.model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
@@ -87,7 +99,7 @@ class DQNAgent:
         self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, amsgrad=True)
 
         # Preallocate inf tensor for legal masking
-        self._inf_tensor = torch.full((1,), -float('inf'), device=self.device)
+        self.neg_inf = -1e9
 
 
     def _update_target_model(self):
@@ -105,7 +117,8 @@ class DQNAgent:
 
         :return: None
         """
-        self.explore_rate = max(self.min_explore_rate, self.explore_rate * self.explore_rate_decay)
+        decay_amount = (self.explore_rate - self.min_explore_rate) / self.explore_decay_steps
+        self.explore_rate = max(self.min_explore_rate, self.explore_rate - decay_amount)
 
 
     def remember(self, state, action, reward, next_state, terminal):
@@ -120,10 +133,9 @@ class DQNAgent:
         :return: None
         """
         self.memory.append((state, action, reward, next_state, terminal))
-        self.latest_experience = (state, action, reward, next_state, terminal)
 
 
-    def act(self, state, legal_mask, training=True):
+    def act(self, state, training=True):
         """
         Action is chosen with tradeoff between exploration (taking random action)
         and exploitation (taking action maximizing Q), determined by explore_rate.
@@ -132,22 +144,32 @@ class DQNAgent:
         :param training: True if the agent wishes to explore, False otherwise
         :return: The choice made.
         """
-        # Exploration
+        # Decay exploration
+        if training:
+            self._decay_exploration()
+
+        # Get the legal mask from the state
+        legal_mask = state['mask']
+
+        # Exploration (Choose random, legal action)
         if training and np.random.random() <= self.explore_rate:
             legal_actions = np.where(legal_mask)[0] # Get indices of legal actions
-            return np.random.choice(legal_actions)
+            return np.random.choice(legal_actions), None
 
         # Exploitation
         with torch.no_grad():
-            board_tensor = torch.as_tensor(state['board'], device=self.device).unsqueeze(0)
-            player_tensor = torch.as_tensor(state['player'], device=self.device).unsqueeze(0)
+            board_tensor = torch.as_tensor(state['board'], dtype=torch.float32, device=self.device).unsqueeze(0)
+            player_tensor = torch.as_tensor(state['player'], dtype=torch.float32, device=self.device).unsqueeze(0)
+            mask_tensor = torch.as_tensor(legal_mask, dtype=torch.bool, device=self.device).unsqueeze(0)
+
+            # Calculate Q-Values
             q_values = self.model(board_tensor, player_tensor)
 
-            # Convert legal mask to tensor and apply masking
-            legal_mask_tensor = torch.as_tensor(legal_mask, dtype=torch.bool, device=self.device)
-            masked_q = torch.where(legal_mask_tensor, q_values, self._inf_tensor)
+            # Apply Masking
+            masked_q = q_values.masked_fill(~mask_tensor, self.neg_inf)
 
-            return masked_q.argmax().item()
+            # Return best action
+            return masked_q.argmax(dim=1).item(), masked_q
 
 
     def replay(self):
@@ -171,13 +193,13 @@ class DQNAgent:
             return self.explore_rate
 
         # Combined Experience Replay
-        batch = random.sample(self.memory, self.batch_size - 1)
-        batch.append(self.latest_experience)
+        batch = random.sample(self.memory, self.batch_size)
 
         board_states = []
         player_states = []
         board_next_states = []
         player_next_states = []
+        mask_next_states = []
         actions = []
         rewards = []
         terminals = []
@@ -187,6 +209,7 @@ class DQNAgent:
             player_states.append(state['player'])
             board_next_states.append(next_state['board'])
             player_next_states.append(next_state['player'])
+            mask_next_states.append(next_state['mask'])
             actions.append(action)
             rewards.append(reward)
             terminals.append(terminal)
@@ -196,18 +219,27 @@ class DQNAgent:
         player_states = torch.as_tensor(np.array(player_states), dtype=torch.float32, device=self.device)
         board_next_states = torch.as_tensor(np.array(board_next_states), dtype=torch.float32, device=self.device)
         player_next_states = torch.as_tensor(np.array(player_next_states), dtype=torch.float32, device=self.device)
+        mask_next_states = torch.as_tensor(np.array(mask_next_states), dtype=torch.bool, device=self.device)
+
         actions = torch.as_tensor(np.array(actions), dtype=torch.long, device=self.device).unsqueeze(1)
         rewards = torch.as_tensor(np.array(rewards), dtype=torch.float32, device=self.device).unsqueeze(1)
         terminals = torch.as_tensor(np.array(terminals), dtype=torch.bool, device=self.device).unsqueeze(1)
 
-        # Compute Q-values for current states
+        # Compute Q-values for current states (Don't need to mask here, because we only take Q(s,a))
         q_values = self.model(board_states, player_states)
         q_values = q_values.gather(1, actions)
 
         # Compute target Q-values (using target model)
         with torch.no_grad():
-            next_actions = self.model(board_next_states, player_next_states).argmax(1, keepdim=True)
-            max_next_q = self.target_model(board_next_states, player_next_states).gather(1, next_actions)
+            q_next_online = self.model(board_next_states, player_next_states) # Online network chooses actions
+            q_next_online_masked = q_next_online.masked_fill(~mask_next_states, self.neg_inf) # Mask illegal actions
+            next_actions = q_next_online_masked.argmax(dim=1, keepdim=True) # Choose next action
+
+            q_next_target_all = self.target_model(board_next_states, player_next_states) # Target network evaluates those actions
+            q_next_target_masked = q_next_target_all.masked_fill(~mask_next_states, self.neg_inf) # Mask illegal actions in target network
+            max_next_q = q_next_target_masked.gather(1, next_actions)
+
+            # Bellman target: if terminal, target = r , otherwise r + gamma * max_next_q
             targets = torch.where(terminals, rewards, rewards + self.discount * max_next_q)
 
         # Compute loss and optimize
@@ -216,15 +248,12 @@ class DQNAgent:
         loss.backward()
 
         # Gradient clipping for stability
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
 
         self.optimizer.step()
 
         # Update target network periodically
         if self.total_steps % self.target_update_freq == 0:
             self._update_target_model()
-
-        # Decay exploration
-        self._decay_exploration()
 
         return self.explore_rate
