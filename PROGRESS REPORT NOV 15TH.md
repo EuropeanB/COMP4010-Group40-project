@@ -1,9 +1,8 @@
 **Milo Goodfellow:**
 
 1. Attempt implementing a series of different ideas that don't work, including pretraining/post-training a model on reward maxing games and another model on rolling out one move into the future, then picking that move which maximizes reward.  
-2. Find a model/reward which actually works, loss graph pictured here:
-
-	![][image1]  
+2. Find a model/reward which actually works, loss graph pictured in "loss_graph.png"
+   
 Wherein which reward is more or less discounted number of rounds played in an episode for each turn, with a huge positive reward equal to discounted final score on win and a small negative reward equal to discounted \-1 on death. 
 
 I think this is the first network/reward we've seen make progress, so I'm going to mostly be iterating on it for the next two weeks. Tree rollout failed for performance reasons, I'm going to look at it again now that a reward will plausibly return information a value network can make predictions about.
