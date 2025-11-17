@@ -9,7 +9,7 @@ import numpy as np
 
 from collections import deque
 
-def print_board(board):
+'''def print_board(board):
     output = ""
     for i in range(11):
         output += f"CHANNEL: {i}\n"
@@ -49,16 +49,7 @@ def play(env, agent, episodes):
             input("Continue")
 
             # ---- Print Q-Values for Testing (First move only for now) ----
-            '''if first_move:
-                for r in range(10):
-                    output = ""
-                    for c in range(13):
-                        value = round(float(masked_q_values[0][r * 13 + c]), 2)
-                        output += f"{value} " + (" " if value >= 0.0 else "")
-                    print(output)
-                print(f"Level-Up: {round(float(masked_q_values[0][-1]), 2)}")
-                print(f"Action: {action}")
-                input("Continue")'''
+
             # ------------------------------------
 
             # ---- Metric tracking ----
@@ -186,16 +177,15 @@ if __name__ == "__main__":
         # Play the model every N episodes
         if episode % 5000 == 0 and episode > 0:
             test_env = gym.make("Dragonsweeper-v0", render_mode=None)
-            play(test_env, agent, 100)
+            play(test_env, agent, 100)'''
 
 
-
-
-
-'''if __name__ == "__main__":
+import Environment
+if __name__ == "__main__":
     train = True # True for training, false for testing
 
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
+    #device = torch.device("cpu") # For now
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print(f"Using device: {device}")
 
@@ -234,25 +224,10 @@ if __name__ == "__main__":
                 with torch.no_grad():
                     logits, _ = actor_critic(board_obs, player_obs)
                     mask = torch.as_tensor(obs['mask'], dtype=torch.float32).to(device)
-
-                    for r in range(10):
-                        output = ""
-                        for c in range(13):
-                            output += f"{mask[r * 13 + c]} "
-                        print(output)
-                    print(mask[-1])
-                    input("Hit Enter")
-
                     masked_logits = logits + (mask - 1) * 1e9
-                    #action = torch.argmax(masked_logits, dim=-1).item()
+                    action = torch.argmax(masked_logits, dim=-1).item()
                     m = torch.distributions.Categorical(logits=masked_logits)
-                    action = m.sample()
-                    #log_probs = m.log_prob(actions)
-                    # --- DONE TEMP TESTING MASKING ---
-
-                    #action = torch.argmax(logits, dim=-1).item()
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 print(info)
                 print(f'REWARD: {reward}')
-                input("Hit enter")'''

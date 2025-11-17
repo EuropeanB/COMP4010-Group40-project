@@ -18,22 +18,16 @@ class ActorCritic(nn.Module):
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 1, kernel_size=3, padding=1), nn.ReLU()
+            nn.Conv2d(channels, 32, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU()
         )
 
         # Calculate CNN output size
-        self.conv_out_size = 1 * rows * cols
+        self.conv_out_size = 32 * rows * cols
 
         # MLP Trunk
         self.fc = nn.Sequential(
-            nn.Linear(self.conv_out_size + player_dim, 512), nn.ReLU(),
-            nn.Linear(512, 256), nn.ReLU()
+            nn.Linear(self.conv_out_size + player_dim, 256), nn.ReLU(),
         )
 
         # Actor head (policy logits)
@@ -52,7 +46,7 @@ class ActorCritic(nn.Module):
         features = self.fc(combined)
 
         policy_logits = self.actor(features)
-        state_value = self.critic(features)
+        state_value = self.critic(features).squeeze(-1)
 
         return policy_logits, state_value
 
@@ -76,7 +70,7 @@ class Environments:
     def reset_env(self, env_id):
         self.total_rewards[env_id] = 0
         self.episode_steps[env_id] = 0
-        obs, info = self.envs[env_id].reset(seed=np.random.randint(1e9))
+        obs, info = self.envs[env_id].reset()
         self.observations[env_id] = obs
         self.done[env_id] = False
         self.first_actor_clicked[env_id] = None
@@ -111,25 +105,28 @@ def PPO(envs, actor_critic, device='cpu'):
     gamma = 0.99
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
     vf_coef_c1 = 0.5 #1 # Weight of the value loss in total PPO loss
-    ent_coef_c2 = 0.02 # Weight of the entropy bonus in PPO loss
-    num_iterations = 100_000
+    ent_coef_c2 = 0.1# CHAT suggested 0.1 for dragonsweeper 0.02 # Weight of the entropy bonus in PPO loss
+    num_iterations = 30_005
+    learning_rate = 2.5e-4 # CHAT suggested 2.5e-4, 5e-4
 
     # Create optimizer and scheduler
-    optimizer = torch.optim.Adam(actor_critic.parameters(), lr=5e-4) #lr originally 2.5e-4
+    optimizer = torch.optim.Adam(actor_critic.parameters(), lr=learning_rate)
 
     # For tracking progress
     max_reward = -10000
     episode_rewards = np.zeros(len(envs))
 
     # ---- METRIC TRACKING ----
-    smoothed_rewards = deque(maxlen=200)
+    smoothed_rewards = deque(maxlen=2000)
     smoothing_factor = 0.9
-    episode_rewards_list = deque(maxlen=200)
-    episode_lengths_list = deque(maxlen=200)
-    step_rewards_list = deque(maxlen=500)
-    first_move_orb_list = deque(maxlen=200)
+    episode_rewards_list = deque(maxlen=2000)
+    episode_lengths_list = deque(maxlen=2000)
+    step_rewards_list = deque(maxlen=5000)
+    first_move_orb_list = deque(maxlen=2000)
+    perfect_level_ups_list = deque(maxlen=2000)
+    poor_level_ups_list = deque(maxlen=2000)
     illegal_actions_count = 0
-    entropy_values = deque(maxlen=200)
+    entropy_values = deque(maxlen=2000)
     # -------------------------
 
     # Loading checkpoint if needed
@@ -170,9 +167,6 @@ def PPO(envs, actor_critic, device='cpu'):
                 actions = m.sample()
                 log_probs = m.log_prob(actions)
 
-                if t == 0:
-                    print("First actions: ", actions.tolist())
-
             # Step environments
             rewards, dones = [], []
             for env_id, action in enumerate(actions):
@@ -185,6 +179,13 @@ def PPO(envs, actor_critic, device='cpu'):
                 # Update logging rewards
                 episode_rewards[env_id] += reward
                 step_rewards_list.append(reward)
+                if action == 130:
+                    if reward == 1.0:
+                        perfect_level_ups_list.append(1.0)
+                        poor_level_ups_list.append(0.0)
+                    else:
+                        perfect_level_ups_list.append(0.0)
+                        poor_level_ups_list.append(1.0)
 
                 # Append results
                 rewards.append(reward)
@@ -205,7 +206,7 @@ def PPO(envs, actor_critic, device='cpu'):
                     # Save best agent
                     if envs.total_rewards[env_id] > max_reward:
                         max_reward = envs.total_rewards[env_id]
-                        torch.save(actor_critic.state_dict(), f"Models/best_agent.pth")
+                        torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Running/Models/best_agent.pth")
 
                     # Reset the environment
                     episode_rewards[env_id] = 0
@@ -216,7 +217,7 @@ def PPO(envs, actor_critic, device='cpu'):
             buffer_player[:, t] = player_batch
             buffer_actions[:, t] = actions
             buffer_logprobs[:, t] = log_probs
-            buffer_values[:, t] = values.squeeze(-1)
+            buffer_values[:, t] = values
             buffer_rewards[:, t] = torch.tensor(rewards, device=device, dtype=torch.float32)
             buffer_dones[:, t] = torch.tensor(dones, device=device, dtype=torch.float32)
             buffer_masks[:, t] = mask_batch
@@ -226,7 +227,7 @@ def PPO(envs, actor_critic, device='cpu'):
             board_batch = torch.stack([torch.as_tensor(obs['board'], dtype=torch.float32) for obs in envs.observations]).to(device)
             player_batch = torch.stack([torch.as_tensor(obs['player'], dtype=torch.float32) for obs in envs.observations]).to(device)
             _, last_values = actor_critic(board_batch, player_batch)
-        buffer_values[:, T] = last_values.squeeze(-1)
+        buffer_values[:, T] = last_values
 
         # Compute GAE advantages
         advantages = torch.zeros((len(envs), T), dtype=torch.float32, device=device)
@@ -285,7 +286,7 @@ def PPO(envs, actor_critic, device='cpu'):
                 optimizer.step()
 
         # Log reward
-        if iteration % 10 == 0 and iteration != 0:
+        if iteration % 50 == 0 and iteration != 0:
             ep_window = 200
             step_window = 500
 
@@ -294,6 +295,9 @@ def PPO(envs, actor_critic, device='cpu'):
             avg_step_reward = np.mean(list(step_rewards_list)[-step_window:]) if step_rewards_list else 0
             avg_entropy = np.mean(list(entropy_values)[-ep_window:]) if entropy_values else 0
             orb_rate = (sum(first_move_orb_list) / len(first_move_orb_list)) if len(first_move_orb_list) > 0 else 0
+            perfect_rate = (sum(perfect_level_ups_list) / len(perfect_level_ups_list)) if len(perfect_level_ups_list) > 0 else 0
+            poor_rate = (sum(poor_level_ups_list) / len(poor_level_ups_list))  if len(perfect_level_ups_list) > 0 else 0
+
             smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
 
             print(
@@ -303,9 +307,9 @@ def PPO(envs, actor_critic, device='cpu'):
                 f" | Avg ep length: {avg_ep_length:.1f}"
                 f" | Smoothed reward: {smooth_reward:.3f}"
                 f" | Entropy: {avg_entropy:.3f}"
-                f" | ORB first-move rate: {orb_rate * 100:.1f}%"
-                f" | Illegal actions: {illegal_actions_count}"
+                f" | ORB First%: {orb_rate * 100:.1f}%"
+                f" | Level Dist.: {perfect_rate * 100:.1f}/{poor_rate * 100:.1f}"
             )
 
-        if iteration % 10 == 0 and iteration != 0:
-            torch.save(actor_critic.state_dict(), f"Models/checkpoint_{iteration}.pth")
+        if iteration % 500 == 0 and iteration != 0:
+            torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Running/Models/checkpoint_{iteration}.pth")

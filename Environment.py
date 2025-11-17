@@ -303,7 +303,38 @@ class DragonSweeperEnv(gym.Env):
         :param num_neighbours_revealed: The number of neighbouring cells that provide information
         :return: the total reward for the step
         """
-        # Nonsense move (masked, should never occur)
+        # Illegal move (should never occur)
+        if not success:
+            return -2.0
+
+        # Player dies
+        if not alive:
+            return -3.0
+
+        # Play wins the game (insanely rare)
+        if win:
+            return 2.0
+
+        # Agent clicked a known to be safe actor (Orb, XP, Gnome, Scroll, etc.)
+        if actor_clicked in self.SAFE_ACTORS:
+            return 1.0
+
+        # If agent healed, reward it being optimal
+        if level_up or actor_clicked == Actors.MEDIKIT:
+            bonus = 0.05 if level_up else 0.0
+            if prev_hp == 1:
+                return 0.95 + bonus
+            else:
+                return -0.1
+
+        # Uninformed move (Discourage blind guessing)
+        if actor_clicked is None and num_neighbours_revealed == 0:
+            return -0.1
+
+        # Any exploration
+        return 0.1
+
+        '''# Nonsense move (masked, should never occur)
         if not success:
             return -20.0
 
@@ -336,7 +367,7 @@ class DragonSweeperEnv(gym.Env):
                 return -3.0
 
         # Calculated guess that didn't kill us
-        return 1.0
+        return 1.0'''
 
 
     def step(self, action):
