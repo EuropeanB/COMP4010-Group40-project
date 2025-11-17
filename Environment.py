@@ -305,6 +305,49 @@ class DragonSweeperEnv(gym.Env):
         """
         # Illegal move (should never occur)
         if not success:
+            return -1.0
+
+        # Player dies
+        if not alive:
+            return -1.0
+
+        # Play wins the game (insanely rare)
+        if win:
+            return 2.0
+
+        if (level_up or actor_clicked == Actors.MEDIKIT) and prev_hp == 1:
+            return 0.8 + (0.2 if level_up else 0.0)
+
+        if (level_up or actor_clicked == Actors.MEDIKIT) and prev_hp == 2:
+            return 0.4 + (0.2 if level_up else 0.0)
+
+        if (level_up or actor_clicked == Actors.MEDIKIT) and prev_hp >= 3:
+            return -0.2
+
+        # Agent clicked a known to be safe actor (Orb, XP, Gnome, Scroll, etc.)
+        if actor_clicked in self.SAFE_ACTORS:
+            return 1.0
+
+        # Hidden move
+        if actor_clicked is None:
+            # Uninformed move (Discourage blind guessing)
+            if num_neighbours_revealed == 0:
+                return -0.1
+
+            # Informed guess
+            elif num_neighbours_revealed >= 1:
+                return 0.1
+
+        # Clicked a revealed chest/mimic
+        if actor_clicked in [Actors.CHEST, Actors.MIMIC]:
+            return 0.4
+
+        # Any other scenario is combat that we won with revealed:
+        return 0.05
+
+
+        '''# Illegal move (should never occur)
+        if not success:
             return -2.0
 
         # Player dies
@@ -332,42 +375,7 @@ class DragonSweeperEnv(gym.Env):
             return -0.1
 
         # Any exploration
-        return 0.1
-
-        '''# Nonsense move (masked, should never occur)
-        if not success:
-            return -20.0
-
-        # Player dies
-        if not alive:
-            return -10.0
-
-        # Player wins
-        if win:
-            return 10.0
-
-        # Player levelled up or healed via medikitt
-        if level_up or actor_clicked == Actors.MEDIKIT:
-            bonus = 1.0 if level_up else 0.0
-            if prev_hp == 1:
-                return 3 + bonus
-            elif prev_hp == 2:
-                return 2 + bonus
-            else:
-                return -1
-
-        # Always safe, always good
-        if actor_clicked in self.SAFE_ACTORS:
-            return 6.0
-
-        # Clicked an unrevealed square
-        if actor_clicked is None:
-            # Blind guess
-            if num_neighbours_revealed == 0:
-                return -3.0
-
-        # Calculated guess that didn't kill us
-        return 1.0'''
+        return 0.1'''
 
 
     def step(self, action):

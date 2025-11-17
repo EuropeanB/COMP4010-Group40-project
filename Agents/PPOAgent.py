@@ -124,6 +124,7 @@ def PPO(envs, actor_critic, device='cpu'):
     step_rewards_list = deque(maxlen=5000)
     first_move_orb_list = deque(maxlen=2000)
     perfect_level_ups_list = deque(maxlen=2000)
+    decent_level_ups_list = deque(maxlen=2000)
     poor_level_ups_list = deque(maxlen=2000)
     illegal_actions_count = 0
     entropy_values = deque(maxlen=2000)
@@ -179,12 +180,18 @@ def PPO(envs, actor_critic, device='cpu'):
                 # Update logging rewards
                 episode_rewards[env_id] += reward
                 step_rewards_list.append(reward)
-                if action == 130:
+                if action == 131:
                     if reward == 1.0:
                         perfect_level_ups_list.append(1.0)
+                        decent_level_ups_list.append(0.0)
+                        poor_level_ups_list.append(0.0)
+                    elif reward == 0.6:
+                        perfect_level_ups_list.append(0.0)
+                        decent_level_ups_list.append(1.0)
                         poor_level_ups_list.append(0.0)
                     else:
                         perfect_level_ups_list.append(0.0)
+                        decent_level_ups_list.append(0.0)
                         poor_level_ups_list.append(1.0)
 
                 # Append results
@@ -296,6 +303,7 @@ def PPO(envs, actor_critic, device='cpu'):
             avg_entropy = np.mean(list(entropy_values)[-ep_window:]) if entropy_values else 0
             orb_rate = (sum(first_move_orb_list) / len(first_move_orb_list)) if len(first_move_orb_list) > 0 else 0
             perfect_rate = (sum(perfect_level_ups_list) / len(perfect_level_ups_list)) if len(perfect_level_ups_list) > 0 else 0
+            decent_rate = (sum(decent_level_ups_list) / len(decent_level_ups_list)) if len(decent_level_ups_list) > 0 else 0
             poor_rate = (sum(poor_level_ups_list) / len(poor_level_ups_list))  if len(perfect_level_ups_list) > 0 else 0
 
             smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
@@ -308,7 +316,7 @@ def PPO(envs, actor_critic, device='cpu'):
                 f" | Smoothed reward: {smooth_reward:.3f}"
                 f" | Entropy: {avg_entropy:.3f}"
                 f" | ORB First%: {orb_rate * 100:.1f}%"
-                f" | Level Dist.: {perfect_rate * 100:.1f}/{poor_rate * 100:.1f}"
+                f" | Level Dist.: {perfect_rate * 100:.1f}/{decent_rate * 100:.1f}/{poor_rate * 100:.1f}"
             )
 
         if iteration % 500 == 0 and iteration != 0:
