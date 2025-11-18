@@ -238,7 +238,7 @@ class DragonSweeperEnv(gym.Env):
         return {"board": board_space, "player": player_space, "mask": mask_space}
 
 
-    def _get_info(self):
+    def _get_info(self, prev_hp, levelled_up):
         """
         Returns diagnostic information for debugging/monitoring. Currently, returns
         the score if the game is won, or the cause of death if lost.
@@ -255,7 +255,9 @@ class DragonSweeperEnv(gym.Env):
             "max hp": self.game.max_health,
             "xp": self.game.xp,
             "required xp": self.game.get_required_level_xp(),
-            "level": self.game.level
+            "level": self.game.level,
+            "prev hp": prev_hp,
+            'levelled up': levelled_up
         }
 
 
@@ -276,7 +278,7 @@ class DragonSweeperEnv(gym.Env):
         if self.render_mode == "human" and self.game_visual:
             self.render()
 
-        return self._get_obs(), self._get_info()
+        return self._get_obs(), self._get_info(None, False)
 
 
     # Convert an action to a board position *assuming it can be converted*
@@ -428,7 +430,7 @@ class DragonSweeperEnv(gym.Env):
         truncated = False
 
         # Get Info
-        info = self._get_info()
+        info = self._get_info(prev_hp, level_up)
 
         # Update render if required
         if self.render_mode == "human" and self.game_visual:

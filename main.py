@@ -198,7 +198,7 @@ if __name__ == "__main__":
         action_size = envs.envs[0].action_space.n
 
         actor_critic = ActorCritic(board_dim, player_dim, action_size).to(device)
-        PPO(envs, actor_critic, device=device)
+        PPO(envs, actor_critic, "Models", device=device)
 
     else:
         env = gym.make("Dragonsweeper-v0", render_mode='human')

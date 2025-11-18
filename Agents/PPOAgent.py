@@ -93,7 +93,7 @@ class Environments:
         return env
 
 
-def PPO(envs, actor_critic, device='cpu'):
+def PPO(envs, actor_critic, save_path, device='cpu'):
     channels, rows, cols = actor_critic.board_shape
     num_actions = rows * cols + 1
     player_dim = actor_critic.player_dim
@@ -115,6 +115,10 @@ def PPO(envs, actor_critic, device='cpu'):
     # For tracking progress
     max_reward = -10000
     episode_rewards = np.zeros(len(envs))
+
+    # ---- CURRICULUM LEARNING ----
+    PHASE_ONE = 150 # Usually enough to learn ORB first strategy.
+    # -----------------------------
 
     # ---- METRIC TRACKING ----
     smoothed_rewards = deque(maxlen=2000)
@@ -173,6 +177,23 @@ def PPO(envs, actor_critic, device='cpu'):
             for env_id, action in enumerate(actions):
                 obs, reward, terminated, truncated, info = envs.step(env_id, action.item())
 
+                # ---- CURRICULUM LEARNING ----
+                # Phase one:
+                #   - Goal: Learn to always click the ORB first.
+                #   - Only give starting positions, reward heavily for orb, penalize for anything else
+                # Phase end:
+                #   - Return to standard learning
+                if iteration < PHASE_ONE:
+                    # Orb is only positive reward on move 1. Modify to give +5.0 instead
+                    if info['last touched'] == 'ORB':
+                        reward = 5.0
+                    # Any other move on move 1 should be penalized
+                    else:
+                        reward = -5.0
+                    truncated = True
+                # -----------------------------
+
+
                 # Log if illegal action was taken (mainly for testing)
                 if not mask_batch[env_id, action.item()]:
                     illegal_actions_count += 1
@@ -180,12 +201,12 @@ def PPO(envs, actor_critic, device='cpu'):
                 # Update logging rewards
                 episode_rewards[env_id] += reward
                 step_rewards_list.append(reward)
-                if action == 131:
-                    if reward == 1.0:
+                if info['levelled up']:
+                    if info['prev hp'] == 1:
                         perfect_level_ups_list.append(1.0)
                         decent_level_ups_list.append(0.0)
                         poor_level_ups_list.append(0.0)
-                    elif reward == 0.6:
+                    elif info['prev hp'] == 2:
                         perfect_level_ups_list.append(0.0)
                         decent_level_ups_list.append(1.0)
                         poor_level_ups_list.append(0.0)
@@ -213,7 +234,7 @@ def PPO(envs, actor_critic, device='cpu'):
                     # Save best agent
                     if envs.total_rewards[env_id] > max_reward:
                         max_reward = envs.total_rewards[env_id]
-                        torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Running/Models/best_agent.pth")
+                        torch.save(actor_critic.state_dict(), f"{save_path}/best_agent.pth")
 
                     # Reset the environment
                     episode_rewards[env_id] = 0
@@ -320,4 +341,4 @@ def PPO(envs, actor_critic, device='cpu'):
             )
 
         if iteration % 500 == 0 and iteration != 0:
-            torch.save(actor_critic.state_dict(), f"/Users/arthurteixeira/Desktop/Pycharm/Running/Models/checkpoint_{iteration}.pth")
+            torch.save(actor_critic.state_dict(), f"{save_path}/checkpoint_{iteration}.pth")
