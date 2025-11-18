@@ -116,10 +116,6 @@ def PPO(envs, actor_critic, save_path, device='cpu'):
     max_reward = -10000
     episode_rewards = np.zeros(len(envs))
 
-    # ---- CURRICULUM LEARNING ----
-    PHASE_ONE = 150 # Usually enough to learn ORB first strategy.
-    # -----------------------------
-
     # ---- METRIC TRACKING ----
     smoothed_rewards = deque(maxlen=2000)
     smoothing_factor = 0.9
@@ -176,23 +172,6 @@ def PPO(envs, actor_critic, save_path, device='cpu'):
             rewards, dones = [], []
             for env_id, action in enumerate(actions):
                 obs, reward, terminated, truncated, info = envs.step(env_id, action.item())
-
-                # ---- CURRICULUM LEARNING ----
-                # Phase one:
-                #   - Goal: Learn to always click the ORB first.
-                #   - Only give starting positions, reward heavily for orb, penalize for anything else
-                # Phase end:
-                #   - Return to standard learning
-                if iteration < PHASE_ONE:
-                    # Orb is only positive reward on move 1. Modify to give +5.0 instead
-                    if info['last touched'] == 'ORB':
-                        reward = 5.0
-                    # Any other move on move 1 should be penalized
-                    else:
-                        reward = -5.0
-                    truncated = True
-                # -----------------------------
-
 
                 # Log if illegal action was taken (mainly for testing)
                 if not mask_batch[env_id, action.item()]:

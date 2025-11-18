@@ -179,6 +179,17 @@ if __name__ == "__main__":
             test_env = gym.make("Dragonsweeper-v0", render_mode=None)
             play(test_env, agent, 100)'''
 
+def print_board(board):
+    output = ""
+    for i in range(4):
+        output += f"CHANNEL: {i}\n"
+        for r in range(10):
+            for c in range(13):
+                output += f"{round(float(board[i, r, c]),2)} "
+            output += '\n'
+        output += '\n\n'
+    print(output)
+
 
 import Environment
 if __name__ == "__main__":
@@ -211,7 +222,7 @@ if __name__ == "__main__":
         actor_critic.load_state_dict(state_dict)
         actor_critic.eval()
 
-        num_episodes = 100
+        num_episodes = 100_000
         for _ in range(num_episodes):
             obs, info = env.reset()
             terminated = False
@@ -231,3 +242,25 @@ if __name__ == "__main__":
                 obs, reward, terminated, truncated, info = env.step(action)
                 print(info)
                 print(f'REWARD: {reward}')
+                input("Continue")
+
+'''    # Test environment Manually
+    gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
+    env = gym.make("Dragonsweeper-v0", render_mode='human')
+    obs, _ = env.reset()
+    print_board(obs['board'])
+    terminated = truncated = False
+
+    while not (terminated or truncated):
+        # Get action
+        choice = input("(1) action (2) level up > ")
+        if choice == "1":
+            row = int(input("row > "))
+            col = int(input("col > "))
+            action = row * 13 + col
+        else:
+            action = 130
+
+        obs, reward, terminated, truncated, info = env.step(action)
+        print_board(obs['board'])
+        print(f"Reward: {reward}")'''
