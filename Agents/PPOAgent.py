@@ -18,16 +18,18 @@ class ActorCritic(nn.Module):
 
         # CNN for board processing
         self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 32, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1), nn.ReLU()
+            nn.Conv2d(channels, 64, kernel_size=3, padding=1), nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
+            #nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU()
         )
 
         # Calculate CNN output size
-        self.conv_out_size = 32 * rows * cols
+        self.conv_out_size = 64 * rows * cols
 
         # MLP Trunk
         self.fc = nn.Sequential(
             nn.Linear(self.conv_out_size + player_dim, 256), nn.ReLU(),
+            #nn.Linear(256, 256), nn.ReLU(),
         )
 
         # Actor head (policy logits)
@@ -93,21 +95,21 @@ class Environments:
         return env
 
 
-def PPO(envs, actor_critic, save_path, device='cpu'):
+def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
     channels, rows, cols = actor_critic.board_shape
     num_actions = rows * cols + 1
     player_dim = actor_critic.player_dim
 
     # Hyperparameters
     T = 128 # Number of time steps collected per environment before performing an update
-    K = 3 # Number of epochs per PPO update
-    batch_size = 128 #64
+    K = 4 # Number of epochs per PPO update
+    batch_size = 128
     gamma = 0.99
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
-    vf_coef_c1 = 0.5 #1 # Weight of the value loss in total PPO loss
-    ent_coef_c2 = 0.1# CHAT suggested 0.1 for dragonsweeper 0.02 # Weight of the entropy bonus in PPO loss
-    num_iterations = 30_005
-    learning_rate = 2.5e-4 # CHAT suggested 2.5e-4, 5e-4
+    vf_coef_c1 = 0.5  # Weight of the value loss in total PPO loss
+    ent_coef_c2 = 0.01 # Weight of the entropy bonus in PPO loss
+    num_iterations = 1_000_000
+    learning_rate = 2.5e-4
 
     # Create optimizer and scheduler
     optimizer = torch.optim.Adam(actor_critic.parameters(), lr=learning_rate)
@@ -281,7 +283,7 @@ def PPO(envs, actor_critic, save_path, device='cpu'):
                 value_pred_clipped = b_old_values + torch.clamp(values - b_old_values, -clip_range, +clip_range)
                 value_loss_unclipped = (values - b_returns) ** 2
                 value_loss_clipped = (value_pred_clipped - b_returns) ** 2
-                value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+                value_loss = torch.max(value_loss_unclipped, value_loss_clipped).mean()
 
                 # Compute total loss
                 loss = policy_loss + ent_coef_c2 * -entropy.mean() + vf_coef_c1 * value_loss
@@ -293,7 +295,7 @@ def PPO(envs, actor_critic, save_path, device='cpu'):
                 optimizer.step()
 
         # Log reward
-        if iteration % 50 == 0 and iteration != 0:
+        if iteration % 10 == 0 and iteration != 0:
             ep_window = 200
             step_window = 500
 
@@ -308,16 +310,48 @@ def PPO(envs, actor_critic, save_path, device='cpu'):
 
             smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
 
-            print(
-                f"\nIteration {iteration}"
-                f" | Avg episode reward: {avg_ep_reward:.3f}"
-                f" | Avg step reward: {avg_step_reward:.3f}"
-                f" | Avg ep length: {avg_ep_length:.1f}"
-                f" | Smoothed reward: {smooth_reward:.3f}"
-                f" | Entropy: {avg_entropy:.3f}"
-                f" | ORB First%: {orb_rate * 100:.1f}%"
-                f" | Level Dist.: {perfect_rate * 100:.1f}/{decent_rate * 100:.1f}/{poor_rate * 100:.1f}"
+            output = ""
+            output += (f"\nIteration {iteration}"
+                       f"| Avg episode reward: {avg_ep_reward:.3f}"
+                       f" | Avg step reward: {avg_step_reward:.3f}"
+                       f" | Avg ep length: {avg_ep_length:.1f}"
+                       f" | Smoothed reward: {smooth_reward:.3f}"
+                       f" | Entropy: {avg_entropy:.3f}"
+                       f" | ORB First%: {orb_rate * 100:.1f}%"
+                       f" | Level Dist.: {perfect_rate * 100:.1f}/{decent_rate * 100:.1f}/{poor_rate * 100:.1f}\n"
             )
+
+            # Run test
+            avg_test_ep_length = []
+            avg_test_ep_reward = []
+            avg_test_step_reward = []
+            for _ in range(50):
+                test_obs, _ = test_env.reset()
+                test_step = 0
+                test_total_reward = 0
+                test_terminated = test_truncated = False
+                while not (test_terminated or test_truncated):
+                    test_board_obs = torch.as_tensor(test_obs['board'], dtype=torch.float32, device=device).unsqueeze(0)
+                    test_player_obs = torch.as_tensor(test_obs['player'], dtype=torch.float32, device=device).unsqueeze(0)
+
+                    with torch.no_grad():
+                        logits, _ = actor_critic(test_board_obs, test_player_obs)
+                        mask = torch.as_tensor(test_obs['mask'], dtype=torch.float32).to(device)
+                        masked_logits = logits + (mask - 1) * 1e9
+                        test_action = torch.argmax(masked_logits, dim=-1).item()
+                    test_obs, test_reward, test_terminated, test_truncated, _ = test_env.step(test_action)
+                    test_step += 1
+                    test_total_reward += test_reward
+                    avg_test_step_reward.append(test_reward)
+                avg_test_ep_length.append(test_step)
+                avg_test_ep_reward.append(test_total_reward)
+            output += (
+                f"TESTING (50 Episodes)"
+                f" | Avg test episode reward: {np.mean(avg_test_ep_reward):.3f}"
+                f" | Avg test step reward: {np.mean(avg_test_step_reward):.3f}"
+                f" | Avg test ep length: {np.mean(avg_test_ep_length):.3f}"
+            )
+            print(output)
 
         if iteration % 500 == 0 and iteration != 0:
             torch.save(actor_critic.state_dict(), f"{save_path}/checkpoint_{iteration}.pth")

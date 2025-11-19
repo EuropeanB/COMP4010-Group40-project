@@ -181,7 +181,7 @@ if __name__ == "__main__":
 
 def print_board(board):
     output = ""
-    for i in range(4):
+    for i in range(2):
         output += f"CHANNEL: {i}\n"
         for r in range(10):
             for c in range(13):
@@ -196,20 +196,26 @@ if __name__ == "__main__":
     train = True # True for training, false for testing
 
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
-    #device = torch.device("cpu") # For now
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     print(f"Using device: {device}")
+
+    train_path = "Models"
+    #train_path = "/Users/arthurteixeira/Desktop/Tomas Files/Pycharm/Running/Models"
+    test_path = "Models/best_agent.pth"
+    #test_path = "/Users/arthurteixeira/Desktop/Tomas Files/Pycharm/Running/Models/best_agent.pth"
 
     if train:
         num_actors = 8
         envs = Environments(num_actors)
+        gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
+        test_env = gym.make("Dragonsweeper-v0", render_mode=None)
 
         board_dim = envs.envs[0].observation_space['board'].shape
         player_dim = envs.envs[0].observation_space['player'].shape[0]
         action_size = envs.envs[0].action_space.n
 
         actor_critic = ActorCritic(board_dim, player_dim, action_size).to(device)
-        PPO(envs, actor_critic, "Models", device=device)
+        PPO(envs, test_env, actor_critic, train_path, device=device)
 
     else:
         env = gym.make("Dragonsweeper-v0", render_mode='human')
@@ -218,7 +224,7 @@ if __name__ == "__main__":
         action_size = env.action_space.n
 
         actor_critic = ActorCritic(board_dim, player_dim, action_size).to(device)
-        state_dict = torch.load("Models/best_agent.pth", weights_only=True)
+        state_dict = torch.load(test_path, weights_only=True)
         actor_critic.load_state_dict(state_dict)
         actor_critic.eval()
 
@@ -240,15 +246,14 @@ if __name__ == "__main__":
                     m = torch.distributions.Categorical(logits=masked_logits)
 
                 obs, reward, terminated, truncated, info = env.step(action)
-                print(info)
+                #print(info)
                 print(f'REWARD: {reward}')
-                input("Continue")
+                input("continue")
 
 '''    # Test environment Manually
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
     env = gym.make("Dragonsweeper-v0", render_mode='human')
     obs, _ = env.reset()
-    print_board(obs['board'])
     terminated = truncated = False
 
     while not (terminated or truncated):
@@ -262,5 +267,4 @@ if __name__ == "__main__":
             action = 130
 
         obs, reward, terminated, truncated, info = env.step(action)
-        print_board(obs['board'])
         print(f"Reward: {reward}")'''
