@@ -11,46 +11,92 @@ class ActorCritic(nn.Module):
     def __init__(self, board_shape, player_dim, num_actions):
         super().__init__()
 
-        self.num_actions = num_actions
+        # These variables are required for checks elsewhere
         self.board_shape = board_shape
         self.player_dim = player_dim
-        channels, rows, cols = self.board_shape
+        self.num_actions = num_actions
 
-        # CNN for board processing
-        self.board_conv = nn.Sequential(
-            nn.Conv2d(channels, 64, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU(),
-            #nn.Conv2d(64, 64, kernel_size=3, padding=1), nn.ReLU()
+        channels, rows, cols = board_shape
+        self.num_cells = rows * cols
+
+        # Per-cell encoder (local spatial decisions)
+        # Input: cell features (5) + player state (2) = 7
+        self.cell_encoder = nn.Sequential(
+            nn.Linear(channels + player_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU()
         )
 
-        # Calculate CNN output size
-        self.conv_out_size = 64 * rows * cols
-
-        # MLP Trunk
-        self.fc = nn.Sequential(
-            nn.Linear(self.conv_out_size + player_dim, 256), nn.ReLU(),
-            #nn.Linear(256, 256), nn.ReLU(),
+        # Board aggregator (global state representation)
+        # Summarizes all cell embeddings into board-level features
+        self.board_aggregator = nn.Sequential(
+            nn.Linear(32, 32),
+            nn.ReLU()
         )
 
-        # Actor head (policy logits)
-        self.actor = nn.Linear(256, num_actions)
+        # Cell action head: simple linear
+        self.cell_action_head = nn.Linear(32, 1)
 
-        # Critic head (state value)
-        self.critic = nn.Linear(256, 1)
+        # Level-up head: sees player state + aggregated board state
+        self.level_up_head = nn.Sequential(
+            nn.Linear(player_dim + 32, 64),  # player (2) + board_summary (32)
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+
+        # Critic
+        self.critic = nn.Sequential(
+            nn.Linear(32 + player_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
 
 
     def forward(self, board_obs, player_obs):
-        # board_obs: [batch, channels, rows, cols]
-        board_features = self.board_conv(board_obs)
-        board_features = board_features.reshape(board_features.size(0), -1)
+        batch, channels, rows, cols = board_obs.shape # B< C< R, W
+        num_cells = rows * cols
 
-        combined = torch.cat([board_features, player_obs], dim=1)
-        features = self.fc(combined)
+        # Encode each cell with player context
+        # Flatten spatial dimensions
+        cells = board_obs.permute(0, 2, 3, 1).reshape(batch * num_cells, channels)  # [B * 130, 5]
 
-        policy_logits = self.actor(features)
-        state_value = self.critic(features).squeeze(-1)
+        # Broadcast player state to each cell
+        player_expanded = player_obs.unsqueeze(1).expand(batch, num_cells, self.player_dim)
+        player_expanded = player_expanded.reshape(batch * num_cells, self.player_dim)  # [B * 130, 2]
 
-        return policy_logits, state_value
+        # Concatenate so each cell sees its features and player state
+        cell_input = torch.cat([cells, player_expanded], dim=1)  # [B * 130, 7]
+
+        # Encode
+        cell_emb = self.cell_encoder(cell_input)  # [B * 130, 32]
+        cell_emb = cell_emb.reshape(batch, num_cells, 32)  # [B, 130, 32]
+
+        # Compute cell action logits
+        cell_logits = self.cell_action_head(cell_emb).squeeze(-1)  # [B, 130]
+
+        # Aggregate board state for global decision
+        # Mean pooling over all cells
+        board_summary = cell_emb.mean(dim=1)  # [B, 32]
+        board_summary = self.board_aggregator(board_summary)  # [B, 32]
+
+        # Compute level-up logit
+        # Level-up sees player state and summary of what's available on the board
+        level_input = torch.cat([player_obs, board_summary], dim=1)  # [B, 34]
+        level_logit = self.level_up_head(level_input)  # [B, 1]
+
+        # Combine all action logits
+        logits = torch.cat([cell_logits, level_logit], dim=1)  # [B, 131]
+
+        # Value function
+        critic_input = torch.cat([board_summary, player_obs], dim=1)  # [B, 34]
+        values = self.critic(critic_input).squeeze(-1)  # [B]
+
+        return logits, values
 
 
 class Environments:
@@ -76,6 +122,7 @@ class Environments:
         self.observations[env_id] = obs
         self.done[env_id] = False
         self.first_actor_clicked[env_id] = None
+
         return obs, info
 
     def step(self, env_id, action):
@@ -90,7 +137,8 @@ class Environments:
 
         return observation, reward, terminated, truncated, info
 
-    def get_env(self):
+    @staticmethod
+    def get_env():
         env = gym.make("Dragonsweeper-v0", render_mode=None)
         return env
 
@@ -107,9 +155,9 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
     gamma = 0.99
     gae_parameter = 0.95 # Generalized Advantage Estimation parameter
     vf_coef_c1 = 0.5  # Weight of the value loss in total PPO loss
-    ent_coef_c2 = 0.01 # Weight of the entropy bonus in PPO loss
+    ent_coef_c2 = 0.03 # Weight of the entropy bonus in PPO loss
     num_iterations = 1_000_000
-    learning_rate = 2.5e-4
+    learning_rate = 1e-4
 
     # Create optimizer and scheduler
     optimizer = torch.optim.Adam(actor_critic.parameters(), lr=learning_rate)
@@ -118,7 +166,7 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
     max_reward = -10000
     episode_rewards = np.zeros(len(envs))
 
-    # ---- METRIC TRACKING ----
+    # ---- METRIC TRACKING ---- #
     smoothed_rewards = deque(maxlen=2000)
     smoothing_factor = 0.9
     episode_rewards_list = deque(maxlen=2000)
@@ -130,7 +178,8 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
     poor_level_ups_list = deque(maxlen=2000)
     illegal_actions_count = 0
     entropy_values = deque(maxlen=2000)
-    # -------------------------
+    # ------------------------- #
+
 
     # Loading checkpoint if needed
     '''checkpoint = torch.load("Models/best_agent.pth")
@@ -295,7 +344,7 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
                 optimizer.step()
 
         # Log reward
-        if iteration % 10 == 0 and iteration != 0:
+        if iteration % 100 == 0 and iteration != 0:
             ep_window = 200
             step_window = 500
 
@@ -321,7 +370,7 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
                        f" | Level Dist.: {perfect_rate * 100:.1f}/{decent_rate * 100:.1f}/{poor_rate * 100:.1f}\n"
             )
 
-            # Run test
+            '''# Run test
             avg_test_ep_length = []
             avg_test_ep_reward = []
             avg_test_step_reward = []
@@ -345,12 +394,13 @@ def PPO(envs, test_env, actor_critic, save_path, device='cpu'):
                     avg_test_step_reward.append(test_reward)
                 avg_test_ep_length.append(test_step)
                 avg_test_ep_reward.append(test_total_reward)
+
             output += (
-                f"TESTING (50 Episodes)"
-                f" | Avg test episode reward: {np.mean(avg_test_ep_reward):.3f}"
-                f" | Avg test step reward: {np.mean(avg_test_step_reward):.3f}"
-                f" | Avg test ep length: {np.mean(avg_test_ep_length):.3f}"
-            )
+                    f"TESTING (50 Episodes)"
+                    f" | Avg test episode reward: {np.mean(avg_test_ep_reward):.3f}"
+                    f" | Avg test step reward: {np.mean(avg_test_step_reward):.3f}"
+                    f" | Avg test ep length: {np.mean(avg_test_ep_length):.3f}"
+            )'''
             print(output)
 
         if iteration % 500 == 0 and iteration != 0:
