@@ -1,0 +1,79 @@
+Tomas Teixera
+
+Past two weeks:
+
+Refined the environment by simplifying and adjusting the observation space. 
+Implemented the render() function (integrated with the visualizer) to update the 
+display with each agent step. Developed a dummy agent and main function to 
+demonstrate the agent working in the environment.
+
+Next two weeks:
+
+Begin implementing a Deep Q-Network (DQN) agent, with the initial goal of 
+achieving basic learning behaviour. Afterwards, focus on refining the model and 
+training setup to improve performance and achieve more competent gameplay 
+from the agent.
+
+
+
+Pierson Michalski
+
+Past two weeks:
+
+Created game visual class. This functions as a visualization of the environment, 
+it uses pygame to render the board and character info. Once it's initialized and 
+given a game object, then when the update display function is called it will 
+update the visualization to the current state of the game.
+
+Next two weeks:
+
+Assist in the development of the DQN and Monte Carlo agents. Additionally, 
+explore other potential candidate like Dyna-Q+ and TD(lambda) algorithms 
+that we could implement in addition to the ones already on the go.
+
+
+
+Zixuan Wen
+
+Past two weeks:
+
+Completed the POMDP designing and figured out how agent handle partial 
+observability. Narrowed down which algorithms to experiment. Now we are 
+focusing on several algorithms: Deep Q-network, TD(lambda), Dyna-Q+, 
+and Monte Carlo.
+
+Next two weeks:
+
+Evaluate agent performance during gameplay and report feedback, to associate 
+with other team members. Additionally, begin developing a Monte Carlo 
+implementation.
+
+
+
+Milo Goodfellow
+
+Last two weeks:
+
+Wrote the reward function and a function that converts from actions to (row,col) 
+board positions. Tomas helped with this by giving me guidance on how to 
+interface with his re-implementation of the game
+
+Next two weeks:
+
+Writing the code to compose and train a Linear -> LayerNorm -> ReLU policy 
+network which plays the game. Then, actually training it on a GPU probably 
+using Google Colab.
+
+
+
+Adrien Gergouil
+
+Last two weeks:
+
+Helped with testing and validation of the environment: Going through example 
+episodes and checking that rewards and game state updates behave as desired.
+
+Next two weeks:
+
+Look at agent’s performance when running the game and reporting feedback. 
+Additionally, going to look into developing a Monte Carlo implementation
