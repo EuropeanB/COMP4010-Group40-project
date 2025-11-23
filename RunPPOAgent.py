@@ -7,7 +7,10 @@ from Agents.PPOAgent import PPO
 
 def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000, test_render_mode='human'):
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
-    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    if training:
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    else:
+        device = torch.device('cpu')
     print(f"Using device: {device}")
 
     if training:
@@ -33,6 +36,7 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
         actor_critic.load_state_dict(state_dict)
         actor_critic.eval()
 
+        wins = 0
         for _ in range(num_tests):
             obs, info = env.reset()
             terminated = False
@@ -58,7 +62,14 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
                     action = torch.argmax(masked_logits, dim=-1).item()
                     m = torch.distributions.Categorical(logits=masked_logits)
 
+                    #print(board_obs[0][1])
+                    #input("Continue")
+
                 obs, reward, terminated, truncated, info = env.step(action)
-                print(info)
-                print(f'REWARD: {reward}')
+                if reward == 20.0:
+                    wins += 1
+                #print(info)
+                #print(f'REWARD: {reward}')
                 #input("continue")
+
+        print(f"WON: {wins} out of {num_tests}")

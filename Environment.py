@@ -118,8 +118,8 @@ class DragonSweeperEnv(gym.Env):
         self.revealed = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
         self.known_power = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # If enemy and revealed, mark its power. 0.0 otherwise
         self.known_surrounding_power = np.full((self.ROWS, self.COLS), self.MAX_FLOAT, dtype=np.float32)  # Power displayed by revealed and empty cells (NOT INCLUDING MINE POWER), MAX_INT otherwise
-        self.not_touching_mine = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # 1.0 if confirmed not touching mine, 0.0 otherwise
         self.revealed_mine = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # 1.0 if it is revealed and a mine, 0.0 otherwise
+        self.num_mines_touching = np.full((self.ROWS, self.COLS), self.MAX_FLOAT, dtype=np.float32)
         self.walls = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # If cell is a wall 1.0. 0.0 otherwise
 
 
@@ -135,8 +135,8 @@ class DragonSweeperEnv(gym.Env):
         self.revealed.fill(0.0) # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
         self.known_power.fill(0.0) # If enemy and revealed, mark its power. 0.0 otherwise
         self.known_surrounding_power.fill(self.MAX_FLOAT) # Power displayed by revealed and empty cells (NOT INCLUDING MINE POWER), MAX_INT otherwise
-        self.not_touching_mine.fill(0.0) # 1.0 if confirmed not touching mine, 0.0 otherwise
         self.revealed_mine.fill(0.0) # 1.0 if it is revealed and a mine, 0.0 otherwise
+        self.num_mines_touching.fill(self.MAX_FLOAT)
         self.walls.fill(0.0) # If cell is a wall 1.0. 0.0 otherwise
 
 
@@ -158,7 +158,7 @@ class DragonSweeperEnv(gym.Env):
                         adj_bombs = cell.adj_power // 100
                         adj_power = cell.adj_power % 100
                         self.known_surrounding_power[r, c] = adj_power
-                        self.not_touching_mine[r, c] = 1.0 if adj_bombs == 0 else 0.0
+                        self.num_mines_touching[r, c] = adj_bombs
 
                 # We treat it as unrevealed if it is a chest as we do not know if chest or mimic
                 elif actor in [Actors.CHEST, Actors.MIMIC]:
@@ -204,14 +204,27 @@ class DragonSweeperEnv(gym.Env):
         self._board_buffer[self.POWER_DANGER_IDX, :, :] = power_danger
 
         # Calculate Mine danger
-        # Step 1: Cells touching a cell flagged as "not touching a mine" are definitely not a mine
-        not_a_mine = maximum_filter(self.not_touching_mine, size=3, mode="constant", cval=0)
+        # Step 1: Number of (hidden cells + revealed mine cells) touching
+        num_hidden_and_rev_mines = (1.0 - self.revealed) + self.revealed_mine
+        num_hidden_and_mines_touching = convolve2d(num_hidden_and_rev_mines, kernel, mode="same", boundary="fill", fillvalue=0)
 
-        # Step 2: invert so it's cells that are potentially a mine, and mask w/ not revealed
-        potential_mine = (1 - not_a_mine) * (1 - self.revealed)
+        # Step 2: To get inferred mine locations, get where num_hidden_and_mines_touching is equal to num_mines_touching, then propagate that value and mask
+        equal_locations = np.where(num_hidden_and_mines_touching == self.num_mines_touching, 1.0, 0.0)
+        propagated_locations = maximum_filter(equal_locations, size=3, mode='constant', cval=0.0)
+        inferred_mines = propagated_locations * (1.0 - self.revealed)
 
-        # Step 3: final output for mines is: potential mine + revealed mine
-        self._board_buffer[self.MINE_DANGER_IDX, :, :] = (potential_mine + self.revealed_mine)
+        # Step 3: Calculate all cells we know are not touching any mines
+        all_mines = inferred_mines + self.revealed_mine
+        num_known_touching = convolve2d(all_mines, kernel, mode='same', boundary='fill', fillvalue=0.0)
+        not_touching_mines = ((self.num_mines_touching - num_known_touching) == 0.0)
+
+        # Step 4: Propagate not touching mines, to find out potential mine locations
+        safe_spread = maximum_filter(not_touching_mines, size=3, mode='constant', cval=0.0)
+        potential_mines = (1.0 - safe_spread)
+        potential_mines = potential_mines * (1.0 - self.revealed)
+
+        # Step 5: Final output is potential mines + all mines
+        self._board_buffer[self.MINE_DANGER_IDX, :, :] = (potential_mines + all_mines)
 
         # Translate game to player space
         self._player_buffer[self.HP_RATIO_IDX] = min(1.0, self.game.curr_health / self.HP_NORMALIZER)
@@ -379,7 +392,7 @@ class DragonSweeperEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
 
-    def render(self, delay=0.6):
+    def render(self, delay=0.1):
         """
         Render the environment.
         """
