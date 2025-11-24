@@ -60,16 +60,15 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
                     mask = torch.as_tensor(obs['mask'], dtype=torch.float32).to(device)
                     masked_logits = logits + (mask - 1) * 1e9
                     action = torch.argmax(masked_logits, dim=-1).item()
-                    m = torch.distributions.Categorical(logits=masked_logits)
-
-                    #print(board_obs[0][1])
-                    #input("Continue")
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 if reward == 20.0:
                     wins += 1
+
+                #input("Check done >")
                 #print(info)
                 #print(f'REWARD: {reward}')
                 #input("continue")
+            #input("game terminated")
 
         print(f"WON: {wins} out of {num_tests}")

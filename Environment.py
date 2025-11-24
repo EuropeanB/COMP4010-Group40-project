@@ -114,114 +114,71 @@ class DragonSweeperEnv(gym.Env):
         self._board_buffer = np.zeros((self.BOARD_CHANNELS, self.ROWS, self.COLS), dtype=np.float32)
         self._player_buffer = np.zeros((self.PLAYER_CHANNELS,), dtype=np.float32)
         self._mask_buffer = np.zeros((self.NUM_ACTIONS,), dtype=np.float32)
-        self.MAX_FLOAT = 1000.0 # Required for get obs
-        self.revealed = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
-        self.known_power = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # If enemy and revealed, mark its power. 0.0 otherwise
-        self.known_surrounding_power = np.full((self.ROWS, self.COLS), self.MAX_FLOAT, dtype=np.float32)  # Power displayed by revealed and empty cells (NOT INCLUDING MINE POWER), MAX_INT otherwise
-        self.revealed_mine = np.zeros((self.ROWS, self.COLS),dtype=np.float32)  # 1.0 if it is revealed and a mine, 0.0 otherwise
-        self.num_mines_touching = np.full((self.ROWS, self.COLS), self.MAX_FLOAT, dtype=np.float32)
-        self.walls = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # If cell is a wall 1.0. 0.0 otherwise
-
+        self.MAX_FLOAT = 1000.0  # Required for get obs
+        self.kernel = np.ones((3, 3), dtype=np.float32)
 
     def _get_obs(self):
-        # Reset buffer (safe)
+        # Reset board buffer (safe)
         self._board_buffer.fill(0.0)
-        self._board_buffer[self.CLICKABLE_IDX, :, :] = 1.0 # All moves start as clickable
+        self._mask_buffer.fill(0.0)
         self._player_buffer.fill(0.0)
-        self._mask_buffer.fill(1.0) # All moves start as legal
-        self._mask_buffer[-1] = self.game.xp >= self.game.get_required_level_xp() # Mask level up if not enough xp
 
-        # Reset tracking arrays (safe)
-        self.revealed.fill(0.0) # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
-        self.known_power.fill(0.0) # If enemy and revealed, mark its power. 0.0 otherwise
-        self.known_surrounding_power.fill(self.MAX_FLOAT) # Power displayed by revealed and empty cells (NOT INCLUDING MINE POWER), MAX_INT otherwise
-        self.revealed_mine.fill(0.0) # 1.0 if it is revealed and a mine, 0.0 otherwise
-        self.num_mines_touching.fill(self.MAX_FLOAT)
-        self.walls.fill(0.0) # If cell is a wall 1.0. 0.0 otherwise
+        # Get trackers
+        revealed = self.game.revealed
+        known_power = self.game.known_power
+        actual_known_surrounding_power = self.game.known_surrounding_power
+        is_max_float = (actual_known_surrounding_power == self.MAX_FLOAT)
+        known_surrounding_power = np.where(is_max_float, self.MAX_FLOAT, actual_known_surrounding_power % 100)
+        num_mines_touching = np.where(is_max_float, self.MAX_FLOAT, actual_known_surrounding_power // 100)
+        revealed_mine = self.game.revealed_mine
+        walls = self.game.walls
+        medikits = self.game.medikits
 
+        # Apply medikits and walls
+        self._board_buffer[self.WALL_IDX] = walls
+        self._board_buffer[self.MEDIKIT_IDX] = medikits
+        self._board_buffer[self.CLICKABLE_IDX] = self.game.legal_mask
 
-        # Populate arrays using game logic
-        for r in range(self.ROWS):
-            for c in range(self.COLS):
-                cell = self.game.board[r][c]
-
-                if not cell.revealed:
-                    continue
-
-                self.revealed[r, c] = 1.0
-                actor = cell.actor
-
-                if actor in [Actors.EMPTY, Actors.NONE]:
-                    self._board_buffer[self.CLICKABLE_IDX, r, c] = 0.0
-                    self._mask_buffer[r * self.COLS + c] = 0.0
-                    if not cell.obscured:
-                        adj_bombs = cell.adj_power // 100
-                        adj_power = cell.adj_power % 100
-                        self.known_surrounding_power[r, c] = adj_power
-                        self.num_mines_touching[r, c] = adj_bombs
-
-                # We treat it as unrevealed if it is a chest as we do not know if chest or mimic
-                elif actor in [Actors.CHEST, Actors.MIMIC]:
-                    self.revealed[r, c] = 0.0
-
-                elif actor in self.SAFE_ACTORS:
-                    continue # Do nothing for now
-
-                elif actor == Actors.MEDIKIT:
-                    self._board_buffer[self.MEDIKIT_IDX, r, c] = 1.0
-
-                # Does not count towards power, only mines. Defused counts as safe
-                elif actor == Actors.MINE:
-                    if cell.power == 0.0: # Defused
-                        continue
-                    else:
-                        self.revealed_mine[r, c] = 1.0
-
-                elif actor == Actors.WALL:
-                    self._board_buffer[self.WALL_IDX, r, c] = 1.0
-                    self.walls[r, c] = 1.0
-
-                # Actor is definitely an enemy
-                else:
-                    self.known_power[r, c] = cell.power
+        # Get legal mask
+        self._mask_buffer[:-1] = self.game.legal_mask.flatten()
+        self._mask_buffer[-1] = self.game.xp >= self.game.get_required_level_xp()
 
         # Calculate Power Danger
         # Step 1: Known surrounding power minus the sum of known power around cell (excludes self)
-        kernel = np.ones((3, 3), dtype=np.float32)
-        neighbour_sum_full = convolve2d(self.known_power, kernel, mode="same", boundary="fill", fillvalue=0)
-        self.known_surrounding_power += self.known_power - neighbour_sum_full
+        neighbour_sum_full = convolve2d(known_power, self.kernel, mode="same", boundary="fill", fillvalue=0)
+        known_surrounding_power += known_power - neighbour_sum_full
 
         # Step 2: minimum value of surrounding cells from known surrounding power (mask w/ not revealed)
-        min_possible_power = minimum_filter(self.known_surrounding_power, size=3, mode='constant', cval=self.MAX_FLOAT)
-        min_possible_power = np.where(1.0 - self.revealed, min_possible_power, 0.0)
+        min_possible_power = minimum_filter(known_surrounding_power, size=3, mode='constant', cval=self.MAX_FLOAT)
+        min_possible_power = np.where(1.0 - revealed, min_possible_power, 0.0)
 
         # Step 3: add walls to min_possible_power to indicate that they will deal 1 damage
-        min_possible_power += self.walls
+        min_possible_power += walls
 
         # Step 5: final output for power is: known power + min possible power (illegal move mask applied later)
-        power_danger = self.known_power + min_possible_power
+        power_danger = known_power + min_possible_power
         power_danger = np.minimum(1.0, power_danger / self.POWER_NORMALIZER)
         self._board_buffer[self.POWER_DANGER_IDX, :, :] = power_danger
 
         # Calculate Mine danger
         # Step 1: Number of (hidden cells + revealed mine cells) touching
-        num_hidden_and_rev_mines = (1.0 - self.revealed) + self.revealed_mine
-        num_hidden_and_mines_touching = convolve2d(num_hidden_and_rev_mines, kernel, mode="same", boundary="fill", fillvalue=0)
+        num_hidden_and_rev_mines = (1.0 - revealed) + revealed_mine
+        num_hidden_and_mines_touching = convolve2d(num_hidden_and_rev_mines, self.kernel, mode="same", boundary="fill", fillvalue=0)
 
         # Step 2: To get inferred mine locations, get where num_hidden_and_mines_touching is equal to num_mines_touching, then propagate that value and mask
-        equal_locations = np.where(num_hidden_and_mines_touching == self.num_mines_touching, 1.0, 0.0)
+        equal_locations = np.where(num_hidden_and_mines_touching == num_mines_touching, 1.0, 0.0)
         propagated_locations = maximum_filter(equal_locations, size=3, mode='constant', cval=0.0)
-        inferred_mines = propagated_locations * (1.0 - self.revealed)
+        inferred_mines = propagated_locations * (1.0 - revealed)
 
         # Step 3: Calculate all cells we know are not touching any mines
-        all_mines = inferred_mines + self.revealed_mine
-        num_known_touching = convolve2d(all_mines, kernel, mode='same', boundary='fill', fillvalue=0.0)
-        not_touching_mines = ((self.num_mines_touching - num_known_touching) == 0.0)
+        all_mines = inferred_mines + revealed_mine
+        num_known_touching = convolve2d(all_mines, self.kernel, mode='same', boundary='fill', fillvalue=0.0)
+        not_touching_mines = ((num_mines_touching - num_known_touching) == 0.0)
 
         # Step 4: Propagate not touching mines, to find out potential mine locations
         safe_spread = maximum_filter(not_touching_mines, size=3, mode='constant', cval=0.0)
         potential_mines = (1.0 - safe_spread)
-        potential_mines = potential_mines * (1.0 - self.revealed)
+        potential_mines = potential_mines * (1.0 - revealed)
 
         # Step 5: Final output is potential mines + all mines
         self._board_buffer[self.MINE_DANGER_IDX, :, :] = (potential_mines + all_mines)
@@ -392,7 +349,7 @@ class DragonSweeperEnv(gym.Env):
         return observation, reward, terminated, truncated, info
 
 
-    def render(self, delay=0.1):
+    def render(self, delay=0.0):
         """
         Render the environment.
         """
