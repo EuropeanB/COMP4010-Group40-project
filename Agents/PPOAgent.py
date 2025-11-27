@@ -4,7 +4,6 @@ import torch
 import gymnasium as gym
 import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
-import torch.nn.functional as F
 from collections import deque
 
 class ActorCritic(nn.Module):
@@ -20,7 +19,7 @@ class ActorCritic(nn.Module):
         self.num_cells = rows * cols
 
         # Per-cell encoder (local spatial decisions)
-        # Input: cell features (5) + player state (2) = 7
+        # Input: cell features (6) + player state (2) = 8
         self.cell_encoder = nn.Sequential(
             nn.Linear(channels + player_dim, 64),
             nn.ReLU(),
@@ -63,14 +62,14 @@ class ActorCritic(nn.Module):
 
         # Encode each cell with player context
         # Flatten spatial dimensions
-        cells = board_obs.permute(0, 2, 3, 1).reshape(batch * num_cells, channels)  # [B * 130, 5]
+        cells = board_obs.permute(0, 2, 3, 1).reshape(batch * num_cells, channels)  # [B * 130, 6]
 
         # Broadcast player state to each cell
         player_expanded = player_obs.unsqueeze(1).expand(batch, num_cells, self.player_dim)
         player_expanded = player_expanded.reshape(batch * num_cells, self.player_dim)  # [B * 130, 2]
 
         # Concatenate so each cell sees its features and player state
-        cell_input = torch.cat([cells, player_expanded], dim=1)  # [B * 130, 7]
+        cell_input = torch.cat([cells, player_expanded], dim=1)  # [B * 130, 8]
 
         # Encode
         cell_emb = self.cell_encoder(cell_input)  # [B * 130, 32]

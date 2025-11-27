@@ -47,7 +47,7 @@ class DragonSweeperEnv(gym.Env):
         self.MINE_NORMALIZER = 8
 
         # Board space indices
-        self.BOARD_CHANNELS = 5
+        self.BOARD_CHANNELS = 6
 
         # Standard channels
         # Power Danger: Minimum damage we can expect to receive. This is normalized to the same scale as hp. So, 1 DMG is
@@ -61,6 +61,7 @@ class DragonSweeperEnv(gym.Env):
         self.MEDIKIT_IDX = 2 # 1.0 if cell is a medikit, 0.0 otherwise
         self.WALL_IDX = 3 # 1.0 if cell is a wall, 0.0 otherwise
         self.CLICKABLE_IDX = 4 # 1.0 if cell is clickable (legal), 0.0 otherwise
+        self.GAZER_IDX = 5 # 1.0 if identified as a gazer, 0.0 otherwise
 
         # Player space indices
         self.PLAYER_CHANNELS = 2
@@ -116,6 +117,14 @@ class DragonSweeperEnv(gym.Env):
         self._mask_buffer = np.zeros((self.NUM_ACTIONS,), dtype=np.float32)
         self.MAX_FLOAT = 1000.0  # Required for get obs
         self.kernel = np.ones((3, 3), dtype=np.float32)
+        self.gazer_kernel = np.array([
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 1.0, 1.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+        ], dtype=np.float32)
+        self.GAZER_CHECKS = [(0, 2), (-1, 1), (0, 1), (1, 1), (-2, 0), (-1, 0), (1, 0), (2, 0), (-1, -1), (0, -1), (1, -1), (0, -2)]
 
     def _get_obs(self):
         # Reset board buffer (safe)
@@ -133,8 +142,9 @@ class DragonSweeperEnv(gym.Env):
         revealed_mine = self.game.revealed_mine
         walls = self.game.walls
         medikits = self.game.medikits
+        obscured = self.game.obscured
 
-        # Apply medikits and walls
+        # Apply basic channels
         self._board_buffer[self.WALL_IDX] = walls
         self._board_buffer[self.MEDIKIT_IDX] = medikits
         self._board_buffer[self.CLICKABLE_IDX] = self.game.legal_mask
@@ -146,10 +156,10 @@ class DragonSweeperEnv(gym.Env):
         # Calculate Power Danger
         # Step 1: Known surrounding power minus the sum of known power around cell (excludes self)
         neighbour_sum_full = convolve2d(known_power, self.kernel, mode="same", boundary="fill", fillvalue=0)
-        known_surrounding_power += known_power - neighbour_sum_full
+        known_surrounding_power_updated = known_surrounding_power + known_power - neighbour_sum_full
 
         # Step 2: minimum value of surrounding cells from known surrounding power (mask w/ not revealed)
-        min_possible_power = minimum_filter(known_surrounding_power, size=3, mode='constant', cval=self.MAX_FLOAT)
+        min_possible_power = minimum_filter(known_surrounding_power_updated, size=3, mode='constant', cval=self.MAX_FLOAT)
         min_possible_power = np.where(1.0 - revealed, min_possible_power, 0.0)
 
         # Step 3: add walls to min_possible_power to indicate that they will deal 1 damage
@@ -182,6 +192,34 @@ class DragonSweeperEnv(gym.Env):
 
         # Step 5: Final output is potential mines + all mines
         self._board_buffer[self.MINE_DANGER_IDX, :, :] = (potential_mines + all_mines)
+
+        # Compute guaranteed Gazer locations by located obscured cells and open cells, then indicating that to the model
+        revealed_and_displaying_info = (known_surrounding_power < self.MAX_FLOAT) * revealed
+        revealed_and_displaying_sum = convolve2d(revealed_and_displaying_info, self.gazer_kernel, mode='same', boundary='fill', fillvalue=0)
+        obscured_sum = convolve2d(obscured, self.gazer_kernel, mode='same', boundary='fill', fillvalue=0)
+        def_not_gazer = ~(revealed_and_displaying_sum > 0)
+        gazer_likeliness = np.minimum(1.0, (obscured_sum * def_not_gazer) / 12.0)
+
+        # Not sure if it's possible to get out of doing loops for this
+        obscured_coords = np.column_stack(np.where(obscured == 1))
+        for r, c in obscured_coords:
+            coords = None
+            for r_plus, c_plus in self.GAZER_CHECKS:
+                r_new = r + r_plus
+                c_new = c + c_plus
+
+                if r_new < 0 or r_new >= self.ROWS or c_new < 0 or c_new >= self.COLS:
+                    continue
+
+                if gazer_likeliness[r_new, c_new] > 0.0:
+                    if coords is None:
+                        coords = (r_new, c_new)
+                    else:
+                        coords = None
+                        break
+            if coords is not None:
+                self._board_buffer[self.POWER_DANGER_IDX, coords[0], coords[1]] = 5.0 / self.POWER_NORMALIZER
+                self._board_buffer[self.GAZER_IDX, coords[0], coords[1]] = 1.0
 
         # Translate game to player space
         self._player_buffer[self.HP_RATIO_IDX] = min(1.0, self.game.curr_health / self.HP_NORMALIZER)
@@ -277,9 +315,9 @@ class DragonSweeperEnv(gym.Env):
             if prev_hp == 1:
                 return 1.5
             elif prev_hp == 2:
-                return 0.3
+                return -0.05
             else:
-                return -0.2
+                return -0.3
 
         row, col = self._action_pos(action)
         power_danger = prev_board[self.POWER_DANGER_IDX, row, col] * self.POWER_NORMALIZER
@@ -288,7 +326,7 @@ class DragonSweeperEnv(gym.Env):
         # Safe exploration should always be done first
         # This can also be accomplished with if in safe_actors or empty
         if power_danger == 0 and mine_flag == 0:
-            return 0.3
+            return 1.0
 
         # Discourage bad exploration
         if power_danger == 1 or mine_flag == 1:

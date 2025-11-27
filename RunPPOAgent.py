@@ -61,6 +61,12 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
                     masked_logits = logits + (mask - 1) * 1e9
                     action = torch.argmax(masked_logits, dim=-1).item()
 
+                    '''choice = input("take over > ")
+                    if choice == '-1':
+                        row = int(input("row > "))
+                        col = int(input("col > "))
+                        action = row * 13 + col'''
+
                 obs, reward, terminated, truncated, info = env.step(action)
                 if reward == 20.0:
                     wins += 1
@@ -68,7 +74,7 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
                 #input("Check done >")
                 #print(info)
                 #print(f'REWARD: {reward}')
-                #input("continue")
+                input("continue")
             #input("game terminated")
 
         print(f"WON: {wins} out of {num_tests}")
