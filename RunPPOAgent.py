@@ -74,7 +74,7 @@ def RunPPOAgent(training, save_directory=None, test_model=None, num_tests=20_000
                 #input("Check done >")
                 #print(info)
                 #print(f'REWARD: {reward}')
-                input("continue")
+                #input("continue")
             #input("game terminated")
 
         print(f"WON: {wins} out of {num_tests}")
