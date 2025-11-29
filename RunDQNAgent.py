@@ -86,7 +86,7 @@ def RunDQNAgent(training, save_directory=None, test_model=None, num_tests=20_000
 
 
             # Log metrics every N episodes
-            if episode % 5000 == 0 and episode > 0:
+            if episode % 500 == 0 and episode > 0:
                 avg_ep_reward = np.mean(list(episode_reward_list))
                 avg_ep_length = np.mean(list(episode_length_list))
                 avg_step_reward = np.mean(list(step_reward_list))
