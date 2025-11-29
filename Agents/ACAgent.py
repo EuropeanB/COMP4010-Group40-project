@@ -13,7 +13,7 @@ def AC(envs, actor_critic, save_path, device="cpu",
        value_coef=0.5,
        learning_rate=2.5e-4,
        rollout_steps=32,
-       max_iterations=1000):
+       max_iterations=100000):
 
     # Optimizer
     optimizer = torch.optim.Adam(actor_critic.parameters(), lr=learning_rate)
@@ -243,3 +243,4 @@ def AC(envs, actor_critic, save_path, device="cpu",
     # END TRAINING
     print("If want to see the results, type: python -m tensorboard.main --logdir Models/tensorboard_ac")
     writer.close()
+
