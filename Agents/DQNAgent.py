@@ -10,58 +10,79 @@ class DQN(nn.Module):
     def __init__(self, board_shape, player_dim, num_actions):
         super(DQN, self).__init__()
 
-        self.channels, self.rows, self.cols = board_shape
+        # Stored for convenience
+        self.board_shape = board_shape
+        self.player_dim = player_dim
+        self.num_actions = num_actions
 
-        # CNN for board processing
-        self.board_conv = nn.Sequential(
-            nn.Conv2d(self.channels, 16, kernel_size=3, padding=1), nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, padding=1), nn.ReLU()
+        channels, rows, cols = board_shape
+        self.num_cells = rows * cols  # 130
+
+        # ---- Per-cell MLP encoder (same as PPO) ----
+        self.cell_encoder = nn.Sequential(
+            nn.Linear(channels + player_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU()
         )
 
-        # Calculate CNN output size
-        self.conv_out_size = 32 * self.rows * self.cols
-
-        # Fully connected layers for board output + player processing
-        self.fc = nn.Sequential(
-            nn.Linear(self.conv_out_size + player_dim, 256), nn.ReLU(),
-            nn.Linear(256, num_actions)
+        # ---- Board aggregator (same as PPO) ----
+        self.board_aggregator = nn.Sequential(
+            nn.Linear(32, 32),
+            nn.ReLU()
         )
 
-    def _raw_forward(self, board_obs, player_obs):
-        # board_obs: [batch, channels, rows, cols]
-        # Process the board with CNN
-        board_features = self.board_conv(board_obs)
-        board_features = board_features.reshape(board_features.size(0), -1)
+        # ---- Cell-based Q-head (per-tile Q-value) ----
+        self.cell_q_head = nn.Linear(32, 1)
 
-        # Concatenate with player features
-        combined = torch.cat([board_features, player_obs], dim=1)
-
-        # Process with the fully connected layer
-        return self.fc(combined)
-
-    @staticmethod
-    def _bias_forward(board_obs, player_obs):
-        SAFE_IDX = 5 # Should align with environment
-        SAFE_BIAS = 5.0
-        ONE_HP = (1 / 20) # Should align with environment
-        HP_BIAS = 5.0
-
-        B = board_obs.size(0)
-
-        # Board bias
-        safe_mask = board_obs[:, SAFE_IDX, :, :].reshape(B, -1)
-        board_bias = safe_mask * SAFE_BIAS
-
-        # Create output tensor
-        player_bias = torch.zeros((B, 1), device=board_obs.device)
-        q_bias = torch.cat([board_bias, player_bias], dim=1)
-
-        return q_bias
+        # ---- Level-up Q-head ----
+        self.level_q_head = nn.Sequential(
+            nn.Linear(player_dim + 32, 64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
 
     def forward(self, board_obs, player_obs):
-        raw_vals = self._raw_forward(board_obs, player_obs)
-        bias_vals = self._bias_forward(board_obs, player_obs)
-        return raw_vals + bias_vals
+        B, channels, rows, cols = board_obs.shape
+        num_cells = rows * cols
+
+        # Flatten board cells
+        # board_obs → [B, R, C, channels] → [B*num_cells, channels]
+        cell_features = (
+            board_obs.permute(0, 2, 3, 1)
+            .reshape(B * num_cells, channels)
+        )
+
+        # Repeat player state for every cell
+        player_expanded = (
+            player_obs.unsqueeze(1)
+            .expand(B, num_cells, self.player_dim)
+            .reshape(B * num_cells, self.player_dim)
+        )
+
+        # Per-cell input: concat board cell + player state
+        cell_input = torch.cat([cell_features, player_expanded], dim=1)
+
+        # Encode cells (same as PPO)
+        cell_emb = self.cell_encoder(cell_input)  # [B*num_cells, 32]
+        cell_emb = cell_emb.reshape(B, num_cells, 32)  # [B, 130, 32]
+
+        # ---- Per-cell Q-values ----
+        cell_q = self.cell_q_head(cell_emb).squeeze(-1)  # [B, 130]
+
+        # ---- Board summary ----
+        board_summary = self.board_aggregator(cell_emb.mean(dim=1))  # [B, 32]
+
+        # ---- Level-up Q-value ----
+        lvl_input = torch.cat([player_obs, board_summary], dim=1)  # [B, 34]
+        lvl_q = self.level_q_head(lvl_input).squeeze(-1)  # [B]
+
+        # ---- Combine ----
+        q_values = torch.cat([cell_q, lvl_q.unsqueeze(1)], dim=1)  # [B, 131]
+
+        return q_values
 
 
 class DQNAgent:
@@ -75,13 +96,13 @@ class DQNAgent:
         self.memory = deque(maxlen=100_000)
 
         # --- AGENT HYPERPARAMETERS ---
-        self.discount = 0 #0.93
+        self.discount = 0.99
         self.batch_size = 64
         self.learning_rate = 0.0001
 
         self.explore_rate = 1.0 # Start at 100%
-        self.min_explore_rate = 0.15 # Keep at 10% exploration
-        self.explore_decay_steps = 200_000  # Reach minimum exploration in 20k steps
+        self.min_explore_rate = 0.05 # Keep at 10% exploration
+        self.explore_decay_steps = 50_000  # Reach minimum exploration in 20k steps
         # self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
 
         self.learning_starts = 5000 # Start learning after 1k steps
