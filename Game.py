@@ -21,6 +21,17 @@ class Game:
         # This is used for tracking cause of death
         self.last_touched = None
 
+        # These are used for drastically speeding up the get_obs() function
+        self.MAX_FLOAT = 1000.0  # Required for get obs
+        self.revealed = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
+        self.known_power = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # If enemy and revealed, mark its power. 0.0 otherwise
+        self.known_surrounding_power = np.full((self.ROWS, self.COLS), self.MAX_FLOAT, dtype=np.float32)  # Power displayed by revealed and empty cells (INCLUDING MINE POWER), MAX_INT otherwise
+        self.revealed_mine = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # 1.0 if it is revealed and a mine, 0.0 otherwise
+        self.walls = np.zeros((self.ROWS, self.COLS), dtype=np.float32)  # If cell is a wall 1.0. 0.0 otherwise
+        self.medikits = np.zeros((self.ROWS, self.COLS), dtype=np.float32) # If cell is a medikit 1.0, 0.0 otherwise
+        self.obscured = np.zeros((self.ROWS, self.COLS), dtype=np.float32) # 0.0 if blocked, 0.5 if open, 1.0 if obscured
+        self.legal_mask = np.ones((self.ROWS, self.COLS), dtype=np.float32) # All start as legal
+
         self.dungeon_generator = DungeonGenerator(self.ROWS, self.COLS)
         self.board = None
 
@@ -35,6 +46,17 @@ class Game:
         self.max_health = 6
         self.curr_health = 6
 
+        # Reset the trackers
+        self.revealed.fill(0.0)  # Simply any revealed cell, 1.0 if revealed, 0.0 otherwise
+        self.known_power.fill(0.0)  # If enemy and revealed, mark its power. 0.0 otherwise
+        self.known_surrounding_power.fill(self.MAX_FLOAT)  # Power displayed by revealed and empty cells (NOT INCLUDING MINE POWER), MAX_INT otherwise
+        self.revealed_mine.fill(0.0)  # 1.0 if it is revealed and a mine, 0.0 otherwise
+        self.walls.fill(0.0)  # If cell is a wall 1.0. 0.0 otherwise
+        self.medikits.fill(0.0) # If cell is a medikit 1.0, 0.0 otherwise
+        self.obscured.fill(0.0) # 0.0 if blocked, 0.5 if open, 1.0 if obscured
+        self.legal_mask.fill(1.0) # All start as legal
+
+        # Initialize seed
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
@@ -42,6 +64,14 @@ class Game:
         self.board = False
         while not self.board:
             self.board = self.dungeon_generator.generate_dungeon()
+
+        # Starting info always available
+        self.revealed[4, 6] = 1.0
+        self.known_power[4, 6] = 13.0  # Dragon always visible
+        for row in range(self.ROWS):
+            for col in range(self.COLS):
+                if self.board[row][col].actor == Actors.ORB:
+                    self.revealed[row, col] = 1.0
 
 
     def get_required_level_xp(self):
@@ -102,9 +132,14 @@ class Game:
             cell.actor = Actors.XP
             cell.xp = cell.power
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.MIMIC: # It's important to pass this to the agent as a chest, as they won't know
+            # For observation, we treat mimic as unrevealed
+            self.revealed[row, col] = 0.0
+
             if cell.revealed is False:
                 cell.revealed = True
             else:
@@ -113,10 +148,18 @@ class Game:
                 cell.actor = Actors.XP
                 cell.xp = cell.power
                 cell.power = 0
+                self.known_power[row, col] = 0
+                self.revealed[row, col] = 1.0 # revealed on kill
 
         elif cell.actor == Actors.EMPTY or cell.actor == Actors.NONE:
             if not cell.revealed:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
+                self.legal_mask[row, col] = 0.0
             else:
                 return True, False, False
 
@@ -125,18 +168,27 @@ class Game:
                 cell.actor = Actors.XP
                 cell.xp = 3
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
             else:
                 self._damage_player(cell.power)
                 cell.previous_power = cell.power
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
                 cell.power = 0
+                self.known_power[row, col] = 0
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.XP:
             self.xp += cell.xp
             self.score += cell.xp
             cell.xp = 0
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
             if cell.previous_power > 0:
                 self._update_surrounding_cells(row, col, cell.previous_power)
@@ -153,12 +205,18 @@ class Game:
                 cell.previously_wizard = False
             elif cell.previously_giant:
                 cell.actor = Actors.MEDIKIT
+                self.medikits[row, col] = 1.0
                 cell.previously_giant = False
             elif cell.previously_dragon:
                 cell.actor = Actors.CROWN
                 cell.previously_dragon = False
             else:
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.DRAGON:
             self._damage_player(cell.power)
@@ -166,34 +224,56 @@ class Game:
             cell.xp = cell.power
             cell.actor = Actors.XP
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.previously_dragon = True
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.DRAGON_EGG:
             cell.actor = Actors.XP
             cell.xp = 3
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.CROWN:
             cell.actor = Actors.EMPTY
+            self.legal_mask[row, col] = 0.0
+            if not cell.obscured:
+                self.known_surrounding_power[row, col] = cell.adj_power
+            else:
+                self.obscured[row, col] = 1.0
             return True, True, True
 
         elif cell.actor == Actors.CHEST:
+            # For observation, we treat chests as unrevealed
+            self.revealed[row, col] = 0.0
+
             if cell.revealed is False:
                 cell.revealed = True
             elif cell.contains_medikit:
                 cell.contains_medikit = False
                 cell.actor = Actors.MEDIKIT
+                self.medikits[row, col] = 1.0
+                self.revealed[row, col] = 1.0
             else:
                 cell.actor = Actors.XP
+                self.revealed[row, col] = 1.0
                 cell.xp = 5
 
         elif cell.actor == Actors.MEDIKIT:
             if cell.revealed is False:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
+                self.medikits[row, col] = 1.0
             else:
                 self.curr_health = self.max_health
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                self.medikits[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.MINE_KING:
             self._damage_player(cell.power)
@@ -201,16 +281,24 @@ class Game:
             cell.xp = cell.power
             cell.actor = Actors.XP
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.previously_mine_king = True
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.SPELL_DISARM:
             # Sets all revealed bombs to XP, all hidden bombs become zero power (update board)
             if cell.revealed is False:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
             else:
                 self._disarm_mines()
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.RAT_KING:
             self._damage_player(cell.power)
@@ -218,15 +306,23 @@ class Game:
             cell.xp = cell.power
             cell.actor = Actors.XP
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.previously_rat_king = True
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.SPELL_REVEAL_RATS:
             if cell.revealed is False:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
             else:
                 self._reveal_rats()
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.WIZARD:
             self._damage_player(cell.power)
@@ -234,32 +330,50 @@ class Game:
             cell.xp = cell.power
             cell.actor = Actors.XP
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.previously_wizard = True
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.SPELL_REVEAL_SLIMES:
             if cell.revealed is False:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
             else:
                 self._reveal_slimes()
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.ORB:
             self._orb_reveal(row, col)
             cell.actor = Actors.EMPTY
+            self.legal_mask[row, col] = 0.0
             cell.revealed = True
+            self.revealed[row, col] = 1.0
+            if not cell.obscured:
+                self.known_surrounding_power[row, col] = cell.adj_power
+            else:
+                self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.WALL:
             if not cell.revealed:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
+                self.walls[row, col] = 1.0
             else:
                 self._damage_player(1)
                 cell.power -= 1
+                self.walls[row, col] = (cell.power / 3.0)
                 if cell.power == 0: # Transform if broken
                     cell.actor = Actors.XP
                     cell.previous_power = 0
                     cell.xp = 1
                     cell.revealed = True
+                    self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.GIANT:
             self._damage_player(cell.power)
@@ -267,23 +381,33 @@ class Game:
             cell.xp = cell.power
             cell.actor = Actors.XP
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.previously_giant = True
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
         elif cell.actor == Actors.SPELL_MAKE_ORB:
             if cell.revealed is False:
                 cell.revealed = True
+                self.revealed[row, col] = 1.0
             else:
                 self._cast_orb_scroll()
                 cell.actor = Actors.EMPTY
+                self.legal_mask[row, col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
 
         elif cell.actor == Actors.GAZER:
             self._damage_player(cell.power)
             cell.previous_power = cell.power
             cell.xp = cell.power
             cell.power = 0
+            self.known_power[row, col] = 0
             cell.actor = Actors.XP
             cell.revealed = True
+            self.revealed[row, col] = 1.0
 
             # Un-obscure surrounding areas
             for (add_row, add_col) in self.ORB_REVEAL:
@@ -293,7 +417,13 @@ class Game:
                 if new_row < 0 or new_row >= self.ROWS or new_col < 0 or new_col >= self.COLS:
                     continue
 
-                self.board[new_row][new_col].obscured = False
+                obs_cell = self.board[new_row][new_col]
+                obs_cell.obscured = False
+                self.obscured[new_row, new_col] = 0.0
+                if obs_cell.actor in [Actors.EMPTY, Actors.NONE] and obs_cell.revealed:
+                    self.known_surrounding_power[new_row][new_col] = obs_cell.adj_power
+
+
 
             # Re-obscure surrounding area for the remaining gazer (if there's overlap in the gazers)
             for i in range(self.ROWS):
@@ -306,13 +436,22 @@ class Game:
                             if new_row < 0 or new_row >= self.ROWS or new_col < 0 or new_col >= self.COLS:
                                 continue
 
+                            if self.board[new_row][new_col].actor in [Actors.EMPTY, Actors.NONE] and self.board[new_row][new_col].revealed:
+                                self.obscured[new_row, new_col] = 1.0
                             self.board[new_row][new_col].obscured = True
+                            self.known_surrounding_power[new_row][new_col] = self.MAX_FLOAT
                         break
 
         elif cell.actor == Actors.GNOME:
             # Reveal the current square and move the gnome
             cell.actor = Actors.EMPTY
+            self.legal_mask[row, col] = 0.0
             cell.revealed = True
+            self.revealed[row, col] = 1.0
+            if not cell.obscured:
+                self.known_surrounding_power[row, col] = cell.adj_power
+            else:
+                self.obscured[row, col] = 1.0
 
             # Find all remaining medikits
             medikits = []
@@ -334,6 +473,9 @@ class Game:
             if len(candidates) == 0:
                 cell.actor = Actors.XP
                 cell.xp = 9
+                self.known_surrounding_power[row, col] = self.MAX_FLOAT
+                self.obscured[row, col] = 0.0
+                self.legal_mask[row, col] = 1.0
                 return True, False, True
 
             # Find closest to a medikit
@@ -379,6 +521,8 @@ class Game:
                     # Adjust power for neighbouring cells
                     for (adj_row, adj_col) in self.get_surrounding_cells((i, j), True):
                         self.board[adj_row][adj_col].adj_power -= 100
+                        if self.board[adj_row][adj_col].revealed and self.board[adj_row][adj_col].actor in [Actors.EMPTY, Actors.NONE] and not self.board[adj_row][adj_col].obscured:
+                            self.known_surrounding_power[adj_row, adj_col] -= 100
 
                     # Turn to XP if already revealed
                     if cell.revealed is True:
@@ -387,26 +531,33 @@ class Game:
 
                     # Set power to zero (defused)
                     cell.power = 0
+                    self.known_power[i, j] = 0
+                    self.revealed_mine[i, j] = 0.0
 
 
     def _reveal_rats(self):
         """
         Sets status to revealed for all rats
         """
-        for row in self.board:
-            for cell in row:
+        for row in range(self.ROWS):
+            for col in range(self.COLS):
+                cell = self.board[row][col]
                 if cell.actor == Actors.RAT:
                     cell.revealed = True
-
+                    self.revealed[row, col] = 1.0
+                    self.known_power[row, col] = cell.power
 
     def _reveal_slimes(self):
         """
         Sets status to revealed for all slimes
         """
-        for row in self.board:
-            for cell in row:
+        for row in range(self.ROWS):
+            for col in range(self.COLS):
+                cell = self.board[row][col]
                 if cell.actor == Actors.SLIME or cell.actor == Actors.BIG_SLIME:
                     cell.revealed = True
+                    self.revealed[row, col] = 1.0
+                    self.known_power[row, col] = cell.power
 
 
     def _orb_reveal(self, row, col):
@@ -424,6 +575,27 @@ class Game:
                 continue
 
             self.board[new_row][new_col].revealed = True
+            self.revealed[new_row, new_col] = 1.0
+            self.known_power[new_row, new_col] = self.board[new_row][new_col].power
+
+            if self.board[new_row][new_col].actor in [Actors.EMPTY, Actors.NONE]:
+                self.legal_mask[new_row][new_col] = 0.0
+                if not self.board[new_row][new_col].obscured:
+                    self.known_surrounding_power[new_row, new_col] = self.board[new_row][new_col].adj_power
+                else:
+                    self.obscured[new_row, new_col] = 1.0
+            elif self.board[new_row][new_col].actor == Actors.MINE:
+                if self.board[new_row][new_col].power > 0: # not defused
+                    self.revealed_mine[new_row, new_col] = 1.0
+                self.known_power[new_row, new_col] = 0.0
+            elif self.board[new_row][new_col].actor == Actors.WALL:
+                self.walls[new_row, new_col] = 1.0
+                self.known_power[new_row, new_col] = 0.0
+            elif self.board[new_row][new_col].actor in [Actors.CHEST, Actors.MIMIC]:
+                self.revealed[new_row, new_col] = 0.0
+                self.known_power[new_row, new_col] = 0.0
+            elif self.board[new_row][new_col].actor == Actors.MEDIKIT:
+                self.medikits[new_row, new_col] = 1.0
 
 
     def _cast_orb_scroll(self):
@@ -464,9 +636,54 @@ class Game:
             return
 
         # Reveal area (3 x 3 surrounding grid) of the choice (and center)
-        self.board[choice[0]][choice[1]].revealed = True
+        choice_cell = self.board[choice[0]][choice[1]]
+        choice_cell.revealed = True
+        self.revealed[choice[0], choice[1]] = 1.0
+        self.known_power[choice[0], choice[1]] = choice_cell.power
+
+        if choice_cell.actor in [Actors.NONE, Actors.EMPTY]:
+            self.legal_mask[choice[0]][choice[1]] = 0.0
+            if not choice_cell.obscured:
+                self.known_surrounding_power[choice[0], choice[1]] = choice_cell.adj_power
+            else:
+                self.obscured[choice[0], choice[1]] = 1.0
+        elif choice_cell.actor == Actors.MINE:
+            if choice_cell.power > 0:  # not defused
+                self.revealed_mine[choice[0], choice[1]] = 1.0
+            self.known_power[choice[0], choice[1]] = 0.0
+        elif choice_cell.actor == Actors.WALL:
+            self.walls[choice[0], choice[1]] = 1.0
+            self.known_power[choice[0], choice[1]] = 0.0
+        elif choice_cell.actor in [Actors.CHEST, Actors.MIMIC]:
+            self.revealed[choice[0], choice[1]] = 0.0
+            self.known_power[choice[0], choice[1]] = 0.0
+        elif choice_cell.actor == Actors.MEDIKIT:
+            self.medikits[choice[0], choice[1]] = 1.0
+
         for (row, col) in self.get_surrounding_cells(choice, True):
-            self.board[row][col].revealed = True
+            cell = self.board[row][col]
+            cell.revealed = True
+            self.revealed[row, col] = 1.0
+            self.known_power[row, col] = cell.power
+
+            if cell.actor in [Actors.NONE, Actors.EMPTY]:
+                self.legal_mask[row][col] = 0.0
+                if not cell.obscured:
+                    self.known_surrounding_power[row, col] = cell.adj_power
+                else:
+                    self.obscured[row, col] = 1.0
+            elif cell.actor == Actors.MINE:
+                if cell.power > 0:  # not defused
+                    self.revealed_mine[row, col] = 1.0
+                self.known_power[row, col] = 0.0
+            elif cell.actor == Actors.WALL:
+                self.walls[row, col] = 1.0
+                self.known_power[row, col] = 0.0
+            elif cell.actor in [Actors.CHEST, Actors.MIMIC]:
+                self.revealed[row, col] = 0.0
+                self.known_power[row, col] = 0.0
+            elif cell.actor == Actors.MEDIKIT:
+                self.medikits[row, col] = 1.0
 
 
     def _update_surrounding_cells(self, row, col, power):
@@ -480,6 +697,8 @@ class Game:
         """
         for (ajd_row, ajd_col) in self.get_surrounding_cells((row, col), True):
             self.board[ajd_row][ajd_col].adj_power -= power
+            if self.known_surrounding_power[ajd_row, ajd_col] != self.MAX_FLOAT:
+                self.known_surrounding_power[ajd_row, ajd_col] = self.board[ajd_row][ajd_col].adj_power
 
 
     @staticmethod
