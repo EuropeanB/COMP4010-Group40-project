@@ -302,9 +302,13 @@ class DragonSweeperEnv(gym.Env):
         if not success:
             return -3.0
 
+        if alive:
+            return 1.0
+
         # Death
         if not alive:
-            return -10.0
+            # return -30.0
+            return -5.0
 
         # Victory
         if win:
@@ -323,16 +327,46 @@ class DragonSweeperEnv(gym.Env):
         power_danger = prev_board[self.POWER_DANGER_IDX, row, col] * self.POWER_NORMALIZER
         mine_flag = prev_board[self.MINE_DANGER_IDX, row, col] == 1.0
 
-        # Safe exploration should always be done first
-        # This can also be accomplished with if in safe_actors or empty
-        if power_danger == 0 and mine_flag == 0:
-            return 1.0
+         # -------------------------
+        # Monte-Carlo friendly shaping
+        # Priority order:
+        #   1) reward safe unknown clicks (exploration)
+        #   2) small reward for low-risk unknown clicks
+        #   3) graded penalty for moderate/high power danger
+        #   4) penalize inferred mines more strongly
+        # -------------------------
 
-        # Discourage bad exploration
-        if power_danger == 1 or mine_flag == 1:
-            return -1.0
+        # Case A: Unknown click (agent didn't already know actor) & not believed to be a mine
+        if success and actor_clicked is None and not mine_flag:
+            # Perfectly safe tile (expected damage 0) -> good exploration bonus
+            if power_danger == 0:
+                return 2.0   # early-game exploration bonus (encourages survival)
+            # Low risk (tiny expected damage: 1-2) -> still good
+            if power_danger <= 2:
+                return 1.0
+            # Moderate risk -> small negative (discourage but not lethal)
+            if power_danger <= 5:
+                # return -0.5
+                return 0.0
+            # High risk -> stronger negative
+            # return -2.0
+            return 0.0
 
-        return 0.05
+        # Case B: Inferred mine (we think it is a mine) -> penalize (but not as punishment as actual death)
+        if mine_flag:
+            # return -5.0
+            return 0.0
+
+        # Case C: Known safe (actor_clicked indicates a revealed actor)
+        # If agent clicked a revealed cell (it knew what it was):
+        # - if it's a medikit or safe XP/orb, earlier logic handles medikit +1.5,
+        # - otherwise give a small positive for known safe reveals, small negative for known dangerous revealed actors.
+        if actor_clicked is not None:
+            # We don't know every actor type here, but treat revealed non-mine, non-medikit clicks as small reward
+            return 0.5
+
+        # Default (fallback): small negative living cost to encourage shorter / purposeful games
+        return -0.1
 
 
     def step(self, action):

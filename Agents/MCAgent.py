@@ -23,7 +23,7 @@ from Game import Game
 
 # --- Hyperparameters (defaults; can be overridden via CLI) ---
 GAMMA = 0.99
-EPS_RANDOM = 0.0
+EPS_RANDOM = 0.1
 DEFAULT_LR = 1e-4
 NUM_EPISODES = 20000
 SAVE_EVERY = 500
@@ -162,6 +162,72 @@ def safe_normalize(tensor, eps=1e-8):
     else:
         return tensor - tensor.mean()
 
+def visualize_policy_matplotlib(model, env, episode_num, device):
+    # Reset environment deterministically based on episode number
+    obs, _ = env.reset(seed=episode_num)
+    board = torch.as_tensor(obs['board'], dtype=torch.float32, device=device).unsqueeze(0)
+    player = torch.as_tensor(obs['player'], dtype=torch.float32, device=device).unsqueeze(0)
+    mask = torch.as_tensor(obs['mask'], dtype=torch.float32, device=device).unsqueeze(0)
+
+    # Forward pass
+    with torch.no_grad():
+        logits, value = model(board, player)
+
+    # Mask invalid actions
+    legal_logits = logits[0].clone()
+    legal_logits[mask[0] == 0] = float("-inf")
+
+    # Convert to probabilities
+    probs = torch.softmax(legal_logits, dim=0).cpu().numpy()
+    grid_probs = probs[:-1].reshape(env.ROWS, env.COLS)
+
+    # Prepare danger map (for color shading)
+    power_danger = obs["board"][env.POWER_DANGER_IDX]
+    mine_danger = obs["board"][env.MINE_DANGER_IDX]
+    wall_mask = obs["board"][env.WALL_IDX]
+
+    # Create figure
+    plt.figure(figsize=(12, 7))
+    plt.title(f"Policy Heatmap at Episode {episode_num}\nValue Estimate = {value.item():.3f}")
+
+    # Base heatmap = probability of clicking
+    plt.imshow(grid_probs, cmap="Blues", vmin=0, vmax=grid_probs.max() + 1e-6)
+
+    # Overlay danger:  
+    # - walls = black  
+    # - mine danger = red  
+    # - high power danger = orange  
+    danger_overlay = np.zeros((*grid_probs.shape, 3))  # RGB
+
+    # Walls → black
+    danger_overlay[wall_mask == 1] = (0, 0, 0)
+
+    # Mine danger → red (blend based on danger level)
+    if mine_danger.max() > 0:
+        danger_overlay[..., 0] += mine_danger  # Red channel
+
+    # Power danger → orange
+    danger_overlay[..., 0] += power_danger * 0.6
+    danger_overlay[..., 1] += power_danger * 0.3
+
+    # Normalize to [0,1]
+    danger_overlay = np.clip(danger_overlay, 0, 1)
+
+    # Overlay danger shading with alpha
+    plt.imshow(danger_overlay, alpha=0.4)
+
+    # Put probability numbers on top
+    for r in range(env.ROWS):
+        for c in range(env.COLS):
+            p = grid_probs[r, c]
+            plt.text(c, r, f"{p:.2f}", va='center', ha='center',
+                     color="white" if p < 0.2 else "black", fontsize=7)
+
+    plt.colorbar(label="Policy Probability")
+    plt.tight_layout()
+    plt.show()
+
+
 def train(args):
 
     # ---------------------------
@@ -198,6 +264,9 @@ def train(args):
     start_time = time.time()
 
     for ep in range(1, NUM_EPISODES + 1):
+
+        
+
         episode_start_time = time.time()
 
         if args.use_seed:
@@ -210,6 +279,7 @@ def train(args):
         episode_rewards = []
         episode_actions = []
         episode_entropies = []
+
 
         # play one full episode
         episode_length = 0
@@ -250,8 +320,10 @@ def train(args):
                     masked_logits = torch.zeros_like(masked_logits)
 
             # Epsilon-random exploration fallback
-            if epsilon_random() < EPS_RANDOM:
-                print("Epsilon-random action selected!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            eps = max(0.02, 0.2 * (1 - episode_length / 50))
+            # if epsilon_random() < EPS_RANDOM:
+            if epsilon_random() < eps:
+                # print("Epsilon-random action selected!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 # choose uniformly from legal actions
                 if legal_mask.any():
                     legal_indices = np.flatnonzero(legal_mask_np)
@@ -319,12 +391,28 @@ def train(args):
             advantages = returns.clone()
 
         # Normalize advantages (not returns)
-        adv_mean = advantages.mean()
-        adv_std = advantages.std()
-        if adv_std <= 1e-8 or not torch.isfinite(adv_std):
-            advantages = advantages - adv_mean
-        else:
-            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
+        # adv_mean = advantages.mean()
+        # adv_std = advantages.std()
+        # if adv_std <= 1e-8 or not torch.isfinite(adv_std):
+        #     advantages = advantages - adv_mean
+        # else:
+        #     advantages = (advantages - adv_mean) / (adv_std + 1e-8)
+        advantages = returns - values.detach()
+
+        if ep % 200 == 0 and episode_length < 5:
+            print("POWER_DANGER:")
+            board_danger = obs['board'][0]  # channel 1
+            print(board_danger)
+            print("MINE_DANGER:")
+            board_mine = obs['board'][1]  # channel 2
+            print(board_mine)
+
+        # if ep % 50 == 0:
+        #     print(f"[REWARD DEBUG] ep {ep} mean return {returns.mean().item():.3f} ep_reward {ep_reward:.3f}")
+
+
+        if ep % 50 == 0:
+            print("Episode rewards:", episode_rewards)
 
         policy_loss = -(logprobs * advantages).mean()
 
@@ -366,14 +454,17 @@ def train(args):
             eta_minutes = eta_seconds / 60
             eta_hours = eta_minutes / 60
 
-            print(
-                f"Episode {ep}/{NUM_EPISODES} | "
-                f"Reward: {ep_reward:.3f} | "
-                f"Avg100: {avg_recent:.3f} | "
-                f"Episode Length: {episode_length} | "
-                f"Avg Time/Ep: {avg_ep_time:.2f}s | "
-                f"Est. Time Left: {eta_minutes:.1f} min ({eta_hours:.2f} hr)"
-            )
+            # print(
+            #     f"Episode {ep}/{NUM_EPISODES} | "
+            #     f"Reward: {ep_reward:.3f} | "
+            #     f"Avg100: {avg_recent:.3f} | "
+            #     f"Episode Length: {episode_length} | "
+            #     f"Avg Time/Ep: {avg_ep_time:.2f}s | "
+            #     f"Est. Time Left: {eta_minutes:.1f} min ({eta_hours:.2f} hr)"
+            # )
+        
+        # if ep % 500 == 0 and ep > 0:
+        #     visualize_policy_matplotlib(model, env, ep, DEVICE)
 
         # Save model periodically
         if ep % SAVE_EVERY == 0:
@@ -409,7 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=10, help="print every N episodes")
     parser.add_argument("--lr", type=float, default=DEFAULT_LR, help="learning rate")
     parser.add_argument("--gamma", type=float, default=GAMMA, help="discount factor")
-    parser.add_argument("--ent-coef", type=float, default=0.01, help="entropy coefficient")
+    parser.add_argument("--ent-coef", type=float, default=0.03, help="entropy coefficient")
     parser.add_argument("--eps-random", type=float, default=0.05, help="epsilon random exploration probability")
     parser.add_argument("--use-seed", action="store_true", help="Enable deterministic seeding for debugging")
     parser.add_argument("--seed", type=int, default=123, help="Seed used when --use-seed is enabled")
