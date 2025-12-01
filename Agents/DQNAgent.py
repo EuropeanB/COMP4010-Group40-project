@@ -97,30 +97,43 @@ class DQNAgent:
 
         # --- AGENT HYPERPARAMETERS ---
         self.discount = 0.99
-        self.batch_size = 64
+        self.batch_size = 128 #64
         self.learning_rate = 0.0001
 
         self.explore_rate = 1.0 # Start at 100%
         self.min_explore_rate = 0.05 # Keep at 10% exploration
-        self.explore_decay_steps = 50_000  # Reach minimum exploration in 20k steps
+        self.explore_decay_steps = 100_000  # Reach minimum exploration in 20k steps
         # self.explore_rate_decay = (self.min_explore_rate / self.explore_rate) ** (1 / self.explore_decay_steps)
 
         self.learning_starts = 5000 # Start learning after 1k steps
         self.target_update_freq = 2000  # Update target model every 1k steps
         self.train_frequency = 4 # Train on memories every 4 steps
 
+        self.initial_lr = 1e-5
+        self.final_lr = self.learning_rate
+        self.lr_ramp_steps = 5000  # ramp up over 5k steps
+
+
         # Select device
-        self.device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        self.device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         print(f"Using device: {self.device}")
 
         # Create and compile our models
         self.model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
         self.target_model = DQN(self.board_dim, self.player_dim, self.action_dim).to(self.device)
         self._update_target_model()
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=self.learning_rate, amsgrad=True)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.initial_lr)
 
         # Preallocate inf tensor for legal masking
         self.neg_inf = -1e9
+
+    def _adjust_learning_rate(self):
+        # Linearly ramp LR from initial_lr → final_lr
+        if self.total_steps < self.lr_ramp_steps:
+            ratio = self.total_steps / self.lr_ramp_steps
+            lr = self.initial_lr + ratio * (self.final_lr - self.initial_lr)
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = lr
 
 
     def _update_target_model(self):
@@ -130,6 +143,11 @@ class DQNAgent:
         :return: None
         """
         self.target_model.load_state_dict(self.model.state_dict())
+
+    def soft_update_target_network(self, tau=0.001):
+        for target_param, param in zip(self.target_model.parameters(), self.model.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+
 
 
     def _decay_exploration(self):
@@ -213,6 +231,9 @@ class DQNAgent:
         if self.total_steps % self.train_frequency != 0:
             return self.explore_rate
 
+        # Adjust learning rate
+        self._adjust_learning_rate()
+
         # Combined Experience Replay
         batch = random.sample(self.memory, self.batch_size)
 
@@ -246,6 +267,7 @@ class DQNAgent:
         rewards = torch.as_tensor(np.array(rewards), dtype=torch.float32, device=self.device).unsqueeze(1)
         terminals = torch.as_tensor(np.array(terminals), dtype=torch.bool, device=self.device).unsqueeze(1)
 
+
         # Compute Q-values for current states (Don't need to mask here, because we only take Q(s,a))
         q_values = self.model(board_states, player_states)
         q_values = q_values.gather(1, actions)
@@ -273,8 +295,11 @@ class DQNAgent:
 
         self.optimizer.step()
 
-        # Update target network periodically
-        if self.total_steps % self.target_update_freq == 0:
-            self._update_target_model()
+        # Soft update target network
+        self.soft_update_target_network(tau=0.001)
+
+        # # Update target network periodically
+        # if self.total_steps % self.target_update_freq == 0:
+        #     self._update_target_model()
 
         return self.explore_rate

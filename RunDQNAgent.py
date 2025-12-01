@@ -16,7 +16,7 @@ def load_model(model, path):
 
 def RunDQNAgent(training, save_directory=None, test_model=None, num_tests=20_000, test_render_mode='human'):
     gym.register(id='Dragonsweeper-v0', entry_point='Environment:DragonSweeperEnv')
-    device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device: {device}")
 
     if training:
