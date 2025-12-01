@@ -13,7 +13,7 @@ def AC(envs, actor_critic, save_path, device="cpu",
        value_coef=0.5,
        learning_rate=2.5e-4,
        rollout_steps=32,
-       max_iterations=100000):
+       max_iterations=60000):
 
     # Optimizer
     optimizer = torch.optim.Adam(actor_critic.parameters(), lr=learning_rate)
@@ -94,12 +94,24 @@ def AC(envs, actor_critic, save_path, device="cpu",
 
                 # Level-up quality
                 if info["levelled up"]:
-                    if info["prev hp"] == 1:
+                    prev_hp = info["prev hp"]
+
+                    if prev_hp == 1:
                         perfect_level_ups_list.append(1)
-                    elif info["prev hp"] == 2:
+                        decent_level_ups_list.append(0)
+                        poor_level_ups_list.append(0)
+
+                    elif prev_hp == 2:
+                        perfect_level_ups_list.append(0)
                         decent_level_ups_list.append(1)
-                    else:
+                        poor_level_ups_list.append(0)
+
+                    else:  # prev_hp >= 3
+                        perfect_level_ups_list.append(0)
+                        decent_level_ups_list.append(0)
                         poor_level_ups_list.append(1)
+
+
 
                 rewards.append(r)
                 dones.append(terminated or truncated)
@@ -205,9 +217,11 @@ def AC(envs, actor_critic, save_path, device="cpu",
             avg_entropy = np.mean(list(entropy_values)[-ep_window:]) if entropy_values else 0
 
             orb_rate = (sum(first_move_orb_list) / len(first_move_orb_list)) if len(first_move_orb_list) else 0
-            perfect = sum(perfect_level_ups_list) / len(perfect_level_ups_list) if perfect_level_ups_list else 0
-            decent = sum(decent_level_ups_list) / len(decent_level_ups_list) if decent_level_ups_list else 0
-            poor = sum(poor_level_ups_list) / len(poor_level_ups_list) if poor_level_ups_list else 0
+            
+            total = len(perfect_level_ups_list)
+            perfect_rate = sum(perfect_level_ups_list) / total
+            decent_rate  = sum(decent_level_ups_list) / total
+            poor_rate    = sum(poor_level_ups_list) / total
 
             smooth_reward = smoothed_rewards[-1] if smoothed_rewards else 0
 
@@ -220,7 +234,7 @@ def AC(envs, actor_critic, save_path, device="cpu",
                 f" | Smoothed reward: {smooth_reward:.3f}"
                 f" | Entropy: {avg_entropy:.3f}"
                 f" | ORB First%: {orb_rate * 100:.1f}%"
-                f" | Level Dist.: {perfect * 100:.1f}/{decent * 100:.1f}/{poor * 100:.1f}\n"
+                f" | Level Dist.: {perfect_rate * 100:.1f}/{decent_rate * 100:.1f}/{poor_rate * 100:.1f}\n"
             )
             print(output)
 
@@ -232,9 +246,9 @@ def AC(envs, actor_critic, save_path, device="cpu",
             writer.add_scalar("Entropy/PolicyEntropy", avg_entropy, iteration)
 
             writer.add_scalar("Gameplay/ORB_FirstRate", orb_rate, iteration)
-            writer.add_scalar("LevelUp/Perfect", perfect, iteration)
-            writer.add_scalar("LevelUp/Decent", decent, iteration)
-            writer.add_scalar("LevelUp/Poor", poor, iteration)
+            writer.add_scalar("LevelUp/Perfect", perfect_rate, iteration)
+            writer.add_scalar("LevelUp/Decent", decent_rate, iteration)
+            writer.add_scalar("LevelUp/Poor", poor_rate, iteration)
 
             writer.add_scalar("Loss/PolicyLoss", policy_loss.item(), iteration)
             writer.add_scalar("Loss/ValueLoss", value_loss.item(), iteration)
