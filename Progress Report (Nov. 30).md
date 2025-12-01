@@ -43,12 +43,12 @@ Hopefully completing that implementation tomorrow, then helping with report
 
 Past Two Weeks:
 
-	I switched out my turn based policy for a score based policy and successfully made progress on training the network. The new model reached parity with the original.  
-	After establishing that score works as a reward, I set out to resolve the smearing, variance and sparsity problems that discounted score induces. I landed on using actor-critic.   
+I switched out my turn based policy for a score based policy and successfully made progress on training the network. The new model reached parity with the original.  
+After establishing that score works as a reward, I set out to resolve the smearing, variance and sparsity problems that discounted score induces. I landed on using actor-critic.   
 The critic model tried to predict the final rewards the policy model would end up getting. The policy network was rewarded with those predicted values and a discount.  
 But, the critic model never converged. It was not able to make reliable predictions about how well the policy network would perform. I'm not sure what the problem is. I expect it is almost surely something about my implementation, rather than the environment. 
 
 The Last Week:
 
-	Try a bit more on getting actor critic to work, and to see if another algorithm, like TD, can fix the sparsity/variance/smearing problems.  
-	Beyond that, record my section of the final project demo and, having done so, work on the final report.
+Try a bit more on getting actor critic to work, and to see if another algorithm, like TD, can fix the sparsity/variance/smearing problems.  
+Beyond that, record my section of the final project demo and, having done so, work on the final report.
